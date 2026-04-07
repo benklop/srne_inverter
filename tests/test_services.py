@@ -13,6 +13,9 @@ from custom_components.srne_inverter import (
     SERVICE_RESTART_INVERTER,
     async_setup_entry,
 )
+from custom_components.srne_inverter.application.use_cases.write_register_result import (
+    WriteRegisterResult,
+)
 from custom_components.srne_inverter.const import DOMAIN
 
 
@@ -33,7 +36,9 @@ def mock_coordinator():
     coordinator.async_config_entry_first_refresh = AsyncMock()
     coordinator.async_shutdown = AsyncMock()
     coordinator.async_request_refresh = AsyncMock()
-    coordinator.async_write_register = AsyncMock(return_value=True)
+    coordinator.async_write_register = AsyncMock(
+        return_value=WriteRegisterResult(success=True)
+    )
     coordinator._failed_reads = 5
     coordinator._total_updates = 100
     coordinator.data = {"battery_soc": 85, "connected": True}
@@ -262,7 +267,9 @@ async def test_restart_inverter_handles_failure(mock_config_entry, mock_coordina
     hass.data = {DOMAIN: {mock_config_entry.entry_id: mock_coordinator}}
 
     # Mock write failure
-    mock_coordinator.async_write_register = AsyncMock(return_value=False)
+    mock_coordinator.async_write_register = AsyncMock(
+        return_value=WriteRegisterResult(success=False, error="device busy")
+    )
 
     # Create service call WITH confirm=true
     call = ServiceCall(DOMAIN, SERVICE_RESTART_INVERTER, {"confirm": True})

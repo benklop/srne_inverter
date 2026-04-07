@@ -266,12 +266,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Write to CmdMachineReset register (0xDF01)
         # Value 0x0001 triggers restart
-        success = await coordinator.async_write_register(0xDF01, 0x0001)
+        write_result = await coordinator.async_write_register(0xDF01, 0x0001)
 
-        if success:
+        if write_result.success:
             _LOGGER.info("Inverter restart command sent successfully")
         else:
-            raise HomeAssistantError("Failed to send restart command to inverter")
+            detail = (write_result.error or "").strip() or "Unknown error"
+            raise HomeAssistantError(
+                f"Failed to send restart command to inverter: {detail}"
+            )
 
     async def handle_hide_unsupported(call: ServiceCall) -> None:
         """Handle hide unsupported entities service call."""

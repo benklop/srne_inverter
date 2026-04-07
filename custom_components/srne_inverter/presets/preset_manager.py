@@ -334,11 +334,11 @@ class PresetManager:
                 encoded_value = self._encode_setting_value(setting_name, value)
 
                 # Write to inverter
-                success = await self._coordinator.async_write_register(
+                write_result = await self._coordinator.async_write_register(
                     register, encoded_value
                 )
 
-                if success:
+                if write_result.success:
                     applied.append(setting_name)
                     _LOGGER.debug(
                         "Applied setting %s = %s (register 0x%04X = 0x%04X)",
@@ -350,8 +350,9 @@ class PresetManager:
                     # Enforce command delay
                     await asyncio.sleep(COMMAND_DELAY_WRITE)
                 else:
-                    failed.append((setting_name, "Write failed"))
-                    _LOGGER.error("Failed to write setting: %s", setting_name)
+                    err = (write_result.error or "").strip() or "Write failed"
+                    failed.append((setting_name, err))
+                    _LOGGER.error("Failed to write setting: %s: %s", setting_name, err)
 
             except Exception as err:  # pylint: disable=broad-except
                 failed.append((setting_name, str(err)))

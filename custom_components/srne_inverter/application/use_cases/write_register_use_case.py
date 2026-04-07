@@ -139,9 +139,19 @@ class WriteRegisterUseCase:
                     )
             else:
                 _LOGGER.warning(
-                    "Attempting to write protected register 0x%04X without password. "
-                    "This will likely fail. Configure password in integration settings.",
+                    "Protected register 0x%04X requires inverter password",
                     register,
+                )
+                return WriteRegisterResult(
+                    success=False,
+                    error=(
+                        "Password-protected register: set Inverter password "
+                        "under Settings → Devices & services → SRNE Inverter → Configure "
+                        "→ Integration. Common values: 4321, 1111, 0000, 111111. "
+                        "Password 0 skips authentication and cannot write 0xE000–0xE0FF."
+                    ),
+                    register=register,
+                    value=value,
                 )
 
         # Step 3: Execute write
@@ -334,6 +344,13 @@ class WriteRegisterUseCase:
                 return f"Value {value} out of range for register {format_address(register)}"
             else:
                 return f"Value out of range for register {format_address(register)}"
+        elif error_code == ExceptionCode.SLAVE_DEVICE_FAILURE:
+            return (
+                "Inverter rejected the write (unsupported or invalid in current state). "
+                "Some SOC parameters need an active BMS link—see the register hint in the "
+                "integration docs. Also confirm password, value limits, and that the unit "
+                "allows changes while running."
+            )
         elif error_code == ExceptionCode.PARAMETER_READ_ONLY:
             return f"Read-only register: {format_address(register)}"
         elif error_code == ExceptionCode.MEMORY_PARITY_ERROR:
