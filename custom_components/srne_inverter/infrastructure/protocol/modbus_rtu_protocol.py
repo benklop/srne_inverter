@@ -42,7 +42,7 @@ class ModbusRTUProtocol(IProtocol):
     Framing:
         BLE: SRNE prepends up to 8 (sometimes fewer) 0x00 bytes before the ADU;
         notify payloads may also contain bytes after the CRC. USB serial: plain
-        Modbus RTU only; ``SerialTransport`` strips a leading TX echo when present.
+        Modbus RTU only; framing is handled by the serial transport.
 
     Attributes:
         crc: CRC calculator implementation

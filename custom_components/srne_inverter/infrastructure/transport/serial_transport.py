@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 try:
     import serial_asyncio_fast as serial_asyncio
@@ -28,24 +28,102 @@ from ..decorators import handle_transport_errors
 _LOGGER = logging.getLogger(__name__)
 
 
-def _strip_request_echo(response: bytes, request: bytes) -> bytes:
-    """Remove a leading copy of the transmitted frame from RX.
+def _get_underlying_serial(writer: asyncio.StreamWriter) -> Any | None:
+    """Best-effort access to the underlying pyserial object."""
+    transport = getattr(writer, "transport", None)
+    if transport is None:
+        return None
+    serial_obj = getattr(transport, "serial", None)
+    if serial_obj is not None:
+        return serial_obj
+    try:
+        return transport.get_extra_info("serial")
+    except Exception:
+        return None
 
-    Some USB–RS485 adapters or wiring configurations feed the TX line back into
-    RX, so the read buffer is ``[request][response]``. Modbus CRC is then taken
-    from the wrong position and validation fails.
+
+async def _readexactly_with_timeout(
+    reader: asyncio.StreamReader, n: int, *, deadline: float
+) -> bytes:
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining <= 0:
+        raise asyncio.TimeoutError("Serial read timed out")
+    return await asyncio.wait_for(reader.readexactly(n), timeout=remaining)
+
+
+async def _read_one_modbus_rtu_frame(
+    reader: asyncio.StreamReader,
+    *,
+    expected_slave: int,
+    deadline: float,
+) -> bytes:
+    """Read exactly one Modbus RTU response frame from a byte stream.
+
+    This is deterministic framing based on Modbus RTU structure:
+    - [slave][func][...][crc_lo][crc_hi]
+    - For 0x03: [slave][0x03][byte_count][data...][crc]
+    - For exception: [slave][func|0x80][exc_code][crc]
+    - For 0x06/0x10: fixed-length 8 bytes total
+
+    If the stream contains other traffic (other slave IDs or noise), bytes are
+    dropped until a candidate frame begins with expected_slave.
     """
-    if not request or len(response) < len(request):
-        return response
-    if response.startswith(request):
-        stripped = response[len(request) :]
-        _LOGGER.debug(
-            "Stripped serial TX echo (%d bytes); RX now %d bytes",
-            len(request),
-            len(stripped),
-        )
-        return stripped
-    return response
+    # Scan until we see the expected slave address AND a plausible function code.
+    # The slave byte may appear inside other frames/noise, so we must validate fc too.
+    pending: bytes | None = None
+    while True:
+        if pending is not None:
+            b = pending
+            pending = None
+        else:
+            b = await _readexactly_with_timeout(reader, 1, deadline=deadline)
+
+        if b[0] != expected_slave:
+            continue
+
+        func = await _readexactly_with_timeout(reader, 1, deadline=deadline)
+        fc = func[0]
+
+        is_exception = bool(fc & 0x80)
+        base_fc = fc & 0x7F
+        if base_fc not in (0x03, 0x06, 0x10):
+            # Not a function we understand for this integration; treat as noise.
+            # Re-process this byte as a potential slave start.
+            pending = func
+            continue
+
+        slave = b
+        break
+
+    if fc & 0x80:
+        rest = await _readexactly_with_timeout(reader, 3, deadline=deadline)
+        return slave + func + rest
+
+    if fc == 0x03:
+        byte_count_b = await _readexactly_with_timeout(reader, 1, deadline=deadline)
+        byte_count = byte_count_b[0]
+        rest = await _readexactly_with_timeout(reader, byte_count + 2, deadline=deadline)
+        return slave + func + byte_count_b + rest
+
+    if fc in (0x06, 0x10):
+        rest = await _readexactly_with_timeout(reader, 6, deadline=deadline)
+        return slave + func + rest
+
+    # Unknown function code: read whatever arrives for a short period,
+    # but keep it bounded so we don't glue multiple frames.
+    chunks: list[bytes] = [slave, func]
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            chunk = await asyncio.wait_for(reader.read(256), timeout=min(remaining, 0.01))
+        except asyncio.TimeoutError:
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 class SerialTransport(ITransport):
@@ -120,46 +198,31 @@ class SerialTransport(ITransport):
     ) -> bytes:
         """Send request and read a Modbus RTU response.
 
-        The response length varies by function code, so this reads until a
-        short inter-byte gap is observed or the timeout is reached.
+        USB serial Modbus RTU should be framed deterministically; returning
+        arbitrary buffered bytes (gap-based) can concatenate multiple frames and
+        trigger CRC mismatches in the protocol layer.
         """
         if not self._connected or self._writer is None or self._reader is None:
             raise RuntimeError("Serial transport not connected")
 
+        # Flush any stale buffered data before issuing a request
+        serial_obj = _get_underlying_serial(self._writer)
+        if serial_obj is not None:
+            try:
+                serial_obj.reset_input_buffer()
+            except Exception:
+                # Best-effort only; not all transports expose this
+                pass
+
+        deadline = asyncio.get_running_loop().time() + timeout
+
         self._writer.write(data)
         await self._writer.drain()
 
-        chunks: list[bytes] = []
-        deadline = asyncio.get_running_loop().time() + timeout
-
-        while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                break
-
-            try:
-                # A short inter-byte gap usually indicates end-of-frame.
-                read_timeout = min(remaining, 0.15)
-                chunk = await asyncio.wait_for(
-                    self._reader.read(256),
-                    timeout=read_timeout,
-                )
-            except asyncio.TimeoutError:
-                break
-
-            if not chunk:
-                break
-
-            chunks.append(chunk)
-
-        if not chunks:
-            raise asyncio.TimeoutError(
-                "No serial response received from "
-                f"{self._port} within {timeout:.2f}s"
-            )
-
-        response = b"".join(chunks)
-        response = _strip_request_echo(response, data)
+        expected_slave = data[0] if data else 0x01
+        response = await _read_one_modbus_rtu_frame(
+            self._reader, expected_slave=expected_slave, deadline=deadline
+        )
         _LOGGER.debug("Serial RX from %s: %s", self._port, response.hex())
         return response
 
