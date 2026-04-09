@@ -211,13 +211,16 @@ class SRNEOptionsFlowHandler(config_entries.OptionsFlow, ConfigFlowValidationMix
             )
 
             try:
-                success = await coordinator.async_write_register(
+                write_result = await coordinator.async_write_register(
                     address, register_value
                 )
 
-                if not success:
+                if not write_result.success:
                     _LOGGER.error(
-                        "Failed to write %s to register 0x%04X", field_name, address
+                        "Failed to write %s to register 0x%04X: %s",
+                        field_name,
+                        address,
+                        write_result.error,
                     )
                     errors[field_name] = "write_failed"
             except Exception as err:

@@ -177,16 +177,19 @@ class ConfigurableSwitch(ConfigurableBaseEntity, SwitchEntity):
             register_address = reg_def.get("_address_int") or reg_def["address"]
 
             # Write to register
-            success = await self.coordinator.async_write_register(
+            write_result = await self.coordinator.async_write_register(
                 register_address, value
             )
 
-            if not success:
+            if not write_result.success:
                 # Revert optimistic state on failure
                 self._optimistic_state = None
                 self.async_write_ha_state()
+                detail = (write_result.error or "").strip() or (
+                    "Write failed. Confirm BLE connection and inverter password if required."
+                )
                 raise HomeAssistantError(
-                    f"Failed to write to register 0x{register_address:04X}. Check BLE connection."
+                    f"Failed to write to register 0x{register_address:04X}: {detail}"
                 )
 
             _LOGGER.info(

@@ -99,7 +99,13 @@ def mock_coordinator(round3_coordinator_data):
     coordinator.data = round3_coordinator_data
     coordinator.last_update_success_time = "2024-02-03T12:00:00"
     coordinator.async_request_refresh = AsyncMock()
-    coordinator.async_write_register = AsyncMock(return_value=True)
+    from custom_components.srne_inverter.application.use_cases.write_register_result import (
+        WriteRegisterResult,
+    )
+
+    coordinator.async_write_register = AsyncMock(
+        return_value=WriteRegisterResult(success=True)
+    )
 
     # Use PropertyMock to ensure last_update_success returns actual datetime
     type(coordinator).last_update_success = PropertyMock(

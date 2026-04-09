@@ -15,7 +15,7 @@ Extracted DTOs
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Set, Optional
+from typing import Dict, Any, List, Set, Optional, Union
 
 from ...domain.interfaces import IConnectionManager, ITransport, IProtocol
 from ...domain.exceptions import DeviceRejectedCommandError
@@ -27,6 +27,21 @@ from ...const import MODBUS_RESPONSE_TIMEOUT
 from .refresh_data_result import RefreshDataResult
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _decode_raw_register(
+    register_name: str,
+    raw_value: int,
+    register_definitions: Dict[str, Any],
+) -> Union[int, float]:
+    """Apply the same decode as _extract_batch_data (scale, offset, data type)."""
+    reg_def = register_definitions.get(register_name, {})
+    return process_register_value(
+        raw_value,
+        data_type=reg_def.get("data_type", "uint16"),
+        scale=reg_def.get("scaling", 1.0),
+        offset=reg_def.get("offset", 0),
+    )
 
 
 class RefreshDataUseCase:
@@ -594,7 +609,13 @@ class RefreshDataUseCase:
                         self._get_register_name(start_address),
                         value,
                     )
-                    return {register_name: value}
+                    return {
+                        register_name: _decode_raw_register(
+                            register_name,
+                            value,
+                            self._register_definitions,
+                        )
+                    }
             else:
                 _LOGGER.debug(
                     "Single register %s failed", self._get_register_name(start_address)
@@ -651,7 +672,11 @@ class RefreshDataUseCase:
                 for offset, value in first_result.items():
                     if isinstance(offset, int) and offset in first_register_map:
                         register_name = first_register_map[offset]
-                        data[register_name] = value
+                        data[register_name] = _decode_raw_register(
+                            register_name,
+                            value,
+                            self._register_definitions,
+                        )
             else:
                 # First half failed due to unsupported register - recurse to find it
                 _LOGGER.debug("First half failed, splitting further")
@@ -708,7 +733,11 @@ class RefreshDataUseCase:
                 for offset, value in second_result.items():
                     if isinstance(offset, int) and offset in second_register_map:
                         register_name = second_register_map[offset]
-                        data[register_name] = value
+                        data[register_name] = _decode_raw_register(
+                            register_name,
+                            value,
+                            self._register_definitions,
+                        )
             else:
                 # Second half failed due to unsupported register - recurse to find it
                 _LOGGER.debug("Second half failed, splitting further")

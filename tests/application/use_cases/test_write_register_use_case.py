@@ -69,6 +69,17 @@ class TestWriteRegisterUseCase:
             await use_case.execute(register=0x0100, value=70000)  # Too high
 
     @pytest.mark.asyncio
+    async def test_execute_protected_register_without_password_fails_fast(
+        self, use_case, mock_transport, mock_protocol
+    ):
+        """Protected 0xE000–0xE0FF writes must not run without a non-zero password."""
+        result = await use_case.execute(register=0xE01E, value=20, password=0)
+
+        assert result.success is False
+        assert "Password-protected register" in result.error
+        mock_transport.send.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_execute_protected_register_with_password(
         self, use_case, mock_transport, mock_protocol
     ):

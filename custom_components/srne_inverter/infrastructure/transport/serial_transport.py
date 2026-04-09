@@ -28,6 +28,26 @@ from ..decorators import handle_transport_errors
 _LOGGER = logging.getLogger(__name__)
 
 
+def _strip_request_echo(response: bytes, request: bytes) -> bytes:
+    """Remove a leading copy of the transmitted frame from RX.
+
+    Some USB–RS485 adapters or wiring configurations feed the TX line back into
+    RX, so the read buffer is ``[request][response]``. Modbus CRC is then taken
+    from the wrong position and validation fails.
+    """
+    if not request or len(response) < len(request):
+        return response
+    if response.startswith(request):
+        stripped = response[len(request) :]
+        _LOGGER.debug(
+            "Stripped serial TX echo (%d bytes); RX now %d bytes",
+            len(request),
+            len(stripped),
+        )
+        return stripped
+    return response
+
+
 class SerialTransport(ITransport):
     """Serial transport for SRNE inverter communication."""
 
@@ -139,6 +159,7 @@ class SerialTransport(ITransport):
             )
 
         response = b"".join(chunks)
+        response = _strip_request_echo(response, data)
         _LOGGER.debug("Serial RX from %s: %s", self._port, response.hex())
         return response
 

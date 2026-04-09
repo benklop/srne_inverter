@@ -26,6 +26,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .application.use_cases.write_register_result import WriteRegisterResult
 from .domain.helpers.address_helpers import format_address
 from .domain.helpers.transformations import convert_to_signed_int16
 from .const import (
@@ -669,12 +670,25 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.error("Read register 0x%04X error: %s", register, err)
             return None
 
+    def _get_inverter_password(self) -> int:
+        """Resolve inverter Modbus password from config entry.
+
+        Password is stored in config entry ``data`` (onboarding and options flow).
+        Fall back to ``options`` if absent for older entries.
+        """
+        data = self._entry.data
+        opts = self._entry.options
+        if "inverter_password" in data:
+            return int(data["inverter_password"])
+        raw = opts.get("inverter_password", 0)
+        return int(raw) if raw is not None else 0
+
     async def async_write_register(
         self,
         register: int,
         value: int,
         slave_id: int = DEFAULT_SLAVE_ID,
-    ) -> bool:
+    ) -> WriteRegisterResult:
         """Write register value using WriteRegisterUseCase.
 
         WARNING: Improper register writes may damage inverter or connected devices.
@@ -686,10 +700,18 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             slave_id: Modbus slave ID (unused)
 
         Returns:
-            True if write succeeded, False otherwise
+            WriteRegisterResult with success flag and error details on failure
         """
         try:
-            password = self._entry.data.get("inverter_password", 0)
+            if not self._write_register_use_case:
+                return WriteRegisterResult(
+                    success=False,
+                    error="Write register is not available (coordinator not fully initialized).",
+                    register=register,
+                    value=value,
+                )
+
+            password = self._get_inverter_password()
 
             result = await self._write_register_use_case.execute(
                 register=register,
@@ -704,11 +726,16 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     result.error,
                 )
 
-            return result.success
+            return result
 
         except Exception as err:
             _LOGGER.error("Write register error: %s", err)
-            return False
+            return WriteRegisterResult(
+                success=False,
+                error=f"Write error: {err}",
+                register=register,
+                value=value,
+            )
 
     async def async_shutdown(self) -> None:
         """Shutdown coordinator and clean up resources."""

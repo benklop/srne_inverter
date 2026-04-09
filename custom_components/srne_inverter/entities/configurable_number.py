@@ -210,15 +210,15 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
             register_address = reg_def.get("_address_int") or reg_def["address"]
 
             # Step 6: Write to inverter via coordinator
-            success = await self.coordinator.async_write_register(
+            write_result = await self.coordinator.async_write_register(
                 register_address, register_value
             )
 
-            if not success:
-                await self._handle_write_failure(
-                    "Write command failed. Check BLE connection.",
-                    register_address,
+            if not write_result.success:
+                detail = (write_result.error or "").strip() or (
+                    "Write command failed. Confirm BLE connection and inverter is responsive."
                 )
+                await self._handle_write_failure(detail, register_address)
                 return
 
             # Step 7: Read-verify after write (with delay for inverter processing)
