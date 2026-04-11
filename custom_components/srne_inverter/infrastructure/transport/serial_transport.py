@@ -145,6 +145,14 @@ class SerialTransport(ITransport):
                 self._client.close()
                 self._client = None
                 return False
+            # Pymodbus clears recv_buffer when the gap between incoming read()
+            # chunks exceeds 3.5 character times. At 9600 baud that is only a few
+            # milliseconds; USB serial often delivers one RTU frame across
+            # multiple chunks with larger scheduling gaps, which truncates the
+            # buffer and produces ModbusIOException timeouts even though the
+            # bytes arrive. Pymodbus already uses ~1s for baud rates above 38k;
+            # apply the same threshold here so frames can assemble reliably.
+            self._client.ctx.inter_frame_time = 10**9
             self._connected = True
             _LOGGER.info("Serial transport connected to %s", address)
             return True

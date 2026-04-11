@@ -1,6 +1,7 @@
 """Unit tests for serial transport Modbus RTU helpers (pymodbus-backed path)."""
 
 import struct
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -8,6 +9,7 @@ from custom_components.srne_inverter.infrastructure.protocol.modbus_crc16 import
     ModbusCRC16,
 )
 from custom_components.srne_inverter.infrastructure.transport.serial_transport import (
+    SerialTransport,
     _bytes_to_request_pdu,
     _response_to_rtu_bytes,
     _validate_rtu_crc,
@@ -50,3 +52,21 @@ def test_response_to_rtu_bytes_read_holding():
     assert raw[0] == 0x01
     assert raw[1] == 0x03
     _validate_rtu_crc(raw)
+
+
+@pytest.mark.asyncio
+async def test_serial_connect_sets_relaxed_inter_frame_time():
+    """Avoid pymodbus recv_buffer clears on slow USB chunk delivery (9600 RTU)."""
+    mock_ctx = MagicMock()
+    mock_client = MagicMock()
+    mock_client.connect = AsyncMock(return_value=True)
+    mock_client.ctx = mock_ctx
+
+    transport = SerialTransport()
+    with patch(
+        "custom_components.srne_inverter.infrastructure.transport.serial_transport.AsyncModbusSerialClient",
+        return_value=mock_client,
+    ):
+        ok = await transport.connect("/dev/ttyUSB0")
+    assert ok is True
+    assert mock_ctx.inter_frame_time == 10**9
