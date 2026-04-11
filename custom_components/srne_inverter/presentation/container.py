@@ -142,7 +142,9 @@ def create_container(
     container.transport = _create_transport(
         hass, entry, container.timing_collector
     )
-    container.connection_manager = _create_connection_manager(container.transport)
+    container.connection_manager = _create_connection_manager(
+        container.transport, entry
+    )
     container.failed_register_repo = _create_failed_register_repository(hass, entry)
 
     # Application Layer
@@ -252,17 +254,21 @@ def _create_transport(
     return BLETransport(hass, timing_collector=timing_collector)
 
 
-def _create_connection_manager(transport: Any) -> Any:
-    """Create connection manager.
+def _create_connection_manager(transport: Any, entry: ConfigEntry) -> Any:
+    """Create connection manager (BLE with disconnect callback, or plain serial).
 
     Args:
         transport: Transport implementation
+        entry: Config entry (``connection_type`` selects manager)
 
     Returns:
-        IConnectionManager implementation (ConnectionManager)
+        IConnectionManager implementation
     """
-    from ..infrastructure.transport import ConnectionManager
+    from ..const import CONF_CONNECTION_TYPE, CONNECTION_TYPE_USB
+    from ..infrastructure.transport import ConnectionManager, SerialConnectionManager
 
+    if entry.data.get(CONF_CONNECTION_TYPE) == CONNECTION_TYPE_USB:
+        return SerialConnectionManager(transport)
     return ConnectionManager(transport)
 
 

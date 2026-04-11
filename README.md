@@ -431,7 +431,7 @@ See [DISCLAIMER.md](DISCLAIMER.md) for complete legal terms and safety warnings.
 - **Home Assistant Community** for integration framework and support
 - **Contributors** for testing, bug reports, and feature development
 - **Bleak Library** for BLE communication support
-- **PySerial / pyserial-asyncio-fast** for USB serial Modbus RTU
+- **PySerial** and **pymodbus** for USB serial Modbus RTU
 
 ## Project Status
 

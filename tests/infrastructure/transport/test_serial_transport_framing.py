@@ -1,60 +1,52 @@
-import asyncio
+"""Unit tests for serial transport Modbus RTU helpers (pymodbus-backed path)."""
+
 import struct
 
 import pytest
 
-from custom_components.srne_inverter.infrastructure.transport.serial_transport import (
-    _read_one_modbus_rtu_frame,
+from custom_components.srne_inverter.infrastructure.protocol.modbus_crc16 import (
+    ModbusCRC16,
 )
-from custom_components.srne_inverter.infrastructure.protocol.modbus_crc16 import ModbusCRC16
+from custom_components.srne_inverter.infrastructure.transport.serial_transport import (
+    _bytes_to_request_pdu,
+    _response_to_rtu_bytes,
+    _validate_rtu_crc,
+)
+from pymodbus.pdu.register_message import ReadHoldingRegistersResponse
 
 
-@pytest.mark.asyncio
-async def test_read_one_frame_read_holding_with_leading_noise():
-    reader = asyncio.StreamReader()
+def _frame_with_crc(pdu: bytes) -> bytes:
     crc = ModbusCRC16()
-
-    # Build a valid 0x03 response for slave 0x01, 2 registers (byte_count=4)
-    pdu = bytes([0x01, 0x03, 0x04, 0x00, 0x63, 0x02, 0x14])
-    frame = pdu + struct.pack("<H", crc.calculate(pdu))
-
-    # Feed noise + a frame from another slave + our valid frame
-    other_pdu = bytes([0x02, 0x03, 0x02, 0x00, 0x01])
-    other_frame = other_pdu + struct.pack("<H", crc.calculate(other_pdu))
-    reader.feed_data(b"\xff\xfe" + other_frame + frame)
-    reader.feed_eof()
-
-    deadline = asyncio.get_running_loop().time() + 1.0
-    got = await _read_one_modbus_rtu_frame(reader, expected_slave=0x01, deadline=deadline)
-    assert got == frame
+    return pdu + struct.pack("<H", crc.calculate(pdu))
 
 
-@pytest.mark.asyncio
-async def test_read_one_frame_exception_response():
-    reader = asyncio.StreamReader()
-    crc = ModbusCRC16()
-
-    pdu = bytes([0x01, 0x83, 0x02])
-    frame = pdu + struct.pack("<H", crc.calculate(pdu))
-    reader.feed_data(b"\x00\x00" + frame)
-    reader.feed_eof()
-
-    deadline = asyncio.get_running_loop().time() + 1.0
-    got = await _read_one_modbus_rtu_frame(reader, expected_slave=0x01, deadline=deadline)
-    assert got == frame
+def test_validate_rtu_crc_accepts_valid_read_request():
+    pdu = bytes([0x01, 0x03, 0x01, 0x00, 0x00, 0x02])
+    _validate_rtu_crc(_frame_with_crc(pdu))
 
 
-@pytest.mark.asyncio
-async def test_read_one_frame_write_single_fixed_length():
-    reader = asyncio.StreamReader()
-    crc = ModbusCRC16()
+def test_validate_rtu_crc_rejects_bad_crc():
+    pdu = bytes([0x01, 0x03, 0x01, 0x00, 0x00, 0x02])
+    bad = pdu + b"\x00\x00"
+    with pytest.raises(ValueError, match="CRC"):
+        _validate_rtu_crc(bad)
 
-    pdu = bytes([0x01, 0x06, 0x01, 0x00, 0x01, 0x2C])
-    frame = pdu + struct.pack("<H", crc.calculate(pdu))
-    reader.feed_data(frame)
-    reader.feed_eof()
 
-    deadline = asyncio.get_running_loop().time() + 1.0
-    got = await _read_one_modbus_rtu_frame(reader, expected_slave=0x01, deadline=deadline)
-    assert got == frame
+def test_bytes_to_request_read_holding():
+    pdu = bytes([0x01, 0x03, 0x01, 0x00, 0x00, 0x02])
+    full = _frame_with_crc(pdu)
+    req = _bytes_to_request_pdu(full)
+    assert req.dev_id == 1
+    assert req.function_code == 0x03
+    assert req.address == 0x0100
+    assert req.count == 2
 
+
+def test_response_to_rtu_bytes_read_holding():
+    r = ReadHoldingRegistersResponse(
+        dev_id=1, address=0, count=2, registers=[100, 200], bits=[]
+    )
+    raw = _response_to_rtu_bytes(r)
+    assert raw[0] == 0x01
+    assert raw[1] == 0x03
+    _validate_rtu_crc(raw)

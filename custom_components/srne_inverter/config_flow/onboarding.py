@@ -441,7 +441,10 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             from ..infrastructure.transport.ble_transport import BLETransport
             from ..infrastructure.transport.serial_transport import SerialTransport
-            from ..infrastructure.transport.connection_manager import ConnectionManager
+            from ..infrastructure.transport.connection_manager import (
+                ConnectionManager,
+                SerialConnectionManager,
+            )
             from ..application.services.timing_collector import TimingCollector
             from ..infrastructure.protocol.modbus_rtu_protocol import ModbusRTUProtocol
             from ..infrastructure.protocol.modbus_crc16 import ModbusCRC16
@@ -459,8 +462,10 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     timing_collector,
                 )
 
-            # Create connection manager
-            connection_manager = ConnectionManager(transport)
+            if self._onboarding_context.connection_type == CONNECTION_TYPE_USB:
+                connection_manager = SerialConnectionManager(transport)
+            else:
+                connection_manager = ConnectionManager(transport)
 
             # BLE transport tracks address on the instance for bleak helpers; USB uses the path only via connect.
             if self._onboarding_context.connection_type != CONNECTION_TYPE_USB:

@@ -10,6 +10,7 @@ homeassistant>=2024.11.0
 
 # Home Assistant dependencies
 pyserial>=3.5
+pymodbus>=3.6.0,<4
 
 # Testing framework
 pytest>=7.4.0

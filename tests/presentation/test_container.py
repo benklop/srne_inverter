@@ -8,10 +8,12 @@ from custom_components.srne_inverter.const import (
 )
 from custom_components.srne_inverter.infrastructure.transport import (
     BLETransport,
+    SerialConnectionManager,
     SerialTransport,
 )
 from custom_components.srne_inverter.presentation.container import (
     DIContainer,
+    _create_connection_manager,
     _create_transport,
     create_container,
     validate_container,
@@ -156,6 +158,18 @@ class TestContainerIntegration:
 
         entry.data = {"address": "AA:BB:CC:DD:EE:FF"}
         assert isinstance(_create_transport(mock_hass, entry, None), BLETransport)
+
+    def test_create_connection_manager_serial_when_usb(self, mock_hass):
+        """USB entries use SerialConnectionManager (no BLE disconnect callback)."""
+        entry_usb = Mock()
+        entry_usb.data = {
+            "address": "/dev/ttyUSB0",
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_USB,
+        }
+        transport = _create_transport(mock_hass, entry_usb, None)
+        assert isinstance(
+            _create_connection_manager(transport, entry_usb), SerialConnectionManager
+        )
 
     def test_container_creates_existing_coordinator(
         self, mock_hass, mock_entry, test_config

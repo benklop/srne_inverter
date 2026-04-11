@@ -6,8 +6,11 @@ and failure tracking.
 
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock
-from custom_components.srne_inverter.infrastructure.transport import ConnectionManager
+from unittest.mock import AsyncMock, Mock
+from custom_components.srne_inverter.infrastructure.transport import (
+    ConnectionManager,
+    SerialConnectionManager,
+)
 from tests.doubles.fake_transport import FakeTransport
 
 
@@ -228,6 +231,30 @@ class TestFailureInfo:
         new_info = manager.get_failure_info()
         assert new_info["consecutive_failures"] > initial_info["consecutive_failures"]
         assert new_info["last_attempt"] > initial_info["last_attempt"]
+
+
+class TestSerialConnectionManager:
+    """USB serial manager does not pass Bleak disconnect callbacks."""
+
+    @pytest.mark.asyncio
+    async def test_connect_invokes_transport_with_address_only(self):
+        transport = Mock()
+        transport.connect = AsyncMock(return_value=True)
+
+        manager = SerialConnectionManager(transport)
+        success = await manager.ensure_connected("/dev/ttyUSB0")
+
+        assert success is True
+        transport.connect.assert_awaited_once_with("/dev/ttyUSB0")
+
+    @pytest.mark.asyncio
+    async def test_serial_implements_interface(self):
+        from custom_components.srne_inverter.domain.interfaces import IConnectionManager
+
+        transport = Mock()
+        transport.connect = AsyncMock(return_value=True)
+        manager = SerialConnectionManager(transport)
+        assert isinstance(manager, IConnectionManager)
 
 
 class TestInterfaceCompliance:
