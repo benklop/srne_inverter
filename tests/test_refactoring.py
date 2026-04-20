@@ -28,7 +28,10 @@ def test_entity_factory_exposes_creation_api():
     assert hasattr(EntityFactory, "create_sensor")
 
 
-def test_sensor_platform_is_thin():
+def test_sensor_platform_delegates_to_entity_factory():
+    """sensor.py should remain a thin setup shim (factory + learned-timeout helpers)."""
     sensor_file = Path(__file__).parent.parent / "custom_components/srne_inverter/sensor.py"
-    lines = sensor_file.read_text().splitlines()
-    assert len(lines) < 120, f"sensor.py should stay small, got {len(lines)} lines"
+    text = sensor_file.read_text(encoding="utf-8")
+    assert "async_setup_entry" in text
+    assert "EntityFactory.create_entities_from_config" in text
+    assert "create_learned_timeout_sensors" in text

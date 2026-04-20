@@ -4,13 +4,17 @@ import pytest
 from unittest.mock import Mock
 from custom_components.srne_inverter.const import (
     CONF_CONNECTION_TYPE,
+    CONNECTION_TYPE_TCP,
     CONNECTION_TYPE_USB,
+    DEFAULT_TCP_PORT,
 )
 from custom_components.srne_inverter.infrastructure.transport import (
     BLETransport,
     SerialConnectionManager,
     SerialTransport,
+    TcpRtuTransport,
 )
+from homeassistant.const import CONF_PORT
 from custom_components.srne_inverter.presentation.container import (
     DIContainer,
     _create_connection_manager,
@@ -86,23 +90,21 @@ class TestDIContainerDependencies:
         """Test that infrastructure layer dependencies are set."""
         container = create_container(mock_hass, mock_entry, test_config)
 
-        # Phase 1: These will be None (placeholders), but fields exist
-        assert hasattr(container, "protocol")
-        assert hasattr(container, "transport")
-        assert hasattr(container, "connection_manager")
+        assert container.protocol is not None
+        assert container.transport is not None
+        assert container.connection_manager is not None
+        assert container.crc is not None
         assert hasattr(container, "failed_register_repo")
-        assert hasattr(container, "crc")
 
     def test_application_layer_dependencies(self, mock_hass, mock_entry, test_config):
         """Test that application layer dependencies are set."""
         container = create_container(mock_hass, mock_entry, test_config)
 
-        # Phase 1: These will be None (placeholders), but fields exist
-        assert hasattr(container, "refresh_data_use_case")
-        assert hasattr(container, "write_register_use_case")
-        assert hasattr(container, "batch_builder_service")
-        assert hasattr(container, "register_mapper_service")
-        assert hasattr(container, "transaction_manager_service")
+        assert container.refresh_data_use_case is not None
+        assert container.write_register_use_case is not None
+        assert container.batch_builder_service is not None
+        assert container.register_mapper_service is not None
+        assert container.transaction_manager_service is not None
 
     def test_presentation_layer_dependencies(self, mock_hass, mock_entry, test_config):
         """Test that presentation layer dependencies are set."""
@@ -159,6 +161,27 @@ class TestContainerIntegration:
         entry.data = {"address": "AA:BB:CC:DD:EE:FF"}
         assert isinstance(_create_transport(mock_hass, entry, None), BLETransport)
 
+    def test_create_transport_selects_tcp_rtu_when_configured(self, mock_hass):
+        entry = Mock()
+        entry.data = {
+            "address": "192.168.1.1",
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
+            CONF_PORT: 502,
+        }
+        transport = _create_transport(mock_hass, entry, None)
+        assert isinstance(transport, TcpRtuTransport)
+        assert transport._port == 502
+
+    def test_create_transport_tcp_default_port(self, mock_hass):
+        entry = Mock()
+        entry.data = {
+            "address": "10.0.0.2",
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
+        }
+        transport = _create_transport(mock_hass, entry, None)
+        assert isinstance(transport, TcpRtuTransport)
+        assert transport._port == DEFAULT_TCP_PORT
+
     def test_create_connection_manager_serial_when_usb(self, mock_hass):
         """USB entries use SerialConnectionManager (no BLE disconnect callback)."""
         entry_usb = Mock()
@@ -185,6 +208,12 @@ class TestContainerIntegration:
         )
 
         assert isinstance(container.coordinator, SRNEDataUpdateCoordinator)
+
+    def test_coordinator_receives_protocol_for_single_register_reads(
+        self, mock_hass, mock_entry, test_config
+    ):
+        container = create_container(mock_hass, mock_entry, test_config)
+        assert container.coordinator._protocol is container.protocol
 
     def test_container_can_be_used_in_existing_setup(
         self, mock_hass, mock_entry, test_config
