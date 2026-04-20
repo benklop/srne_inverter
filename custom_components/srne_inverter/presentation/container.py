@@ -186,6 +186,7 @@ def create_container(
         write_use_case=container.write_register_use_case,
         transport=container.transport,
         connection_manager=container.connection_manager,
+        protocol=container.protocol,
         batch_builder=container.batch_builder_service,
         register_mapper=container.register_mapper_service,
         transaction_manager=container.transaction_manager_service,
@@ -447,6 +448,7 @@ def _create_coordinator(
     write_use_case: Any,
     transport: Any,
     connection_manager: Any,
+    protocol: Any,
     batch_builder: Any,
     register_mapper: Any,
     transaction_manager: Any,
@@ -464,6 +466,7 @@ def _create_coordinator(
         write_use_case: Use case for register writes
         transport: Transport implementation
         connection_manager: Connection manager implementation
+        protocol: Modbus protocol (single-register reads / consistency with writes)
         batch_builder: Batch builder service
         register_mapper: Register mapper service
         transaction_manager: Transaction manager service
@@ -484,6 +487,7 @@ def _create_coordinator(
         config,
         transport=transport,
         connection_manager=connection_manager,
+        protocol=protocol,
         refresh_data_use_case=refresh_use_case,
         write_register_use_case=write_use_case,
         batch_builder=batch_builder,

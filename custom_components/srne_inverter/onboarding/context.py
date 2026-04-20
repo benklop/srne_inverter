@@ -34,6 +34,9 @@ class OnboardingContext:
     detection_timestamp: str | None = None
     detection_duration_seconds: float | None = None
     detection_method: str | None = None  # "auto" | "manual" | "skipped"
+    # Identity read during auto-detect (Modbus MachModelNum2 + ProductSNStr)
+    detection_model_code: int | None = None
+    detection_product_serial: str | None = None
 
     # Configuration settings
     custom_settings: dict[str, Any] = field(default_factory=dict)

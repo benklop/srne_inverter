@@ -216,7 +216,7 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
 
             if not write_result.success:
                 detail = (write_result.error or "").strip() or (
-                    "Write command failed. Confirm BLE connection and inverter is responsive."
+                    "Write command failed. Confirm inverter connection and that the device is responsive."
                 )
                 await self._handle_write_failure(detail, register_address)
                 return

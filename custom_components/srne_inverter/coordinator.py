@@ -32,6 +32,7 @@ from .domain.helpers.transformations import convert_to_signed_int16
 from .const import (
     DEFAULT_SLAVE_ID,
     DOMAIN,
+    MODBUS_RESPONSE_TIMEOUT,
     TIMING_SAMPLE_SIZE,
 )
 
@@ -53,6 +54,7 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         device_config: dict[str, Any],
         transport: Any = None,
         connection_manager: Any = None,
+        protocol: Any = None,
         refresh_data_use_case: Any = None,
         write_register_use_case: Any = None,
         batch_builder: Any = None,
@@ -70,6 +72,7 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             device_config: Device configuration with registers
             transport: Optional injected ITransport implementation
             connection_manager: Optional injected IConnectionManager implementation
+            protocol: Optional Modbus protocol (required for async_read_register)
             refresh_data_use_case: Optional RefreshDataUseCase
             write_register_use_case: Optional WriteRegisterUseCase
             batch_builder: Optional BatchBuilderService
@@ -99,6 +102,7 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Injected dependencies
         self._transport = transport
         self._connection_manager = connection_manager
+        self._protocol = protocol
         self._refresh_data_use_case = refresh_data_use_case
         self._write_register_use_case = write_register_use_case
         self._batch_builder = batch_builder
@@ -651,23 +655,40 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             Register value as integer, or None if read failed
         """
         try:
-            # Use the transport directly to read a single register
-            if not self._transport:
-                _LOGGER.error("Transport not available for register read")
+            if not self._transport or not self._connection_manager:
+                _LOGGER.error(
+                    "Transport or connection manager not available for register read"
+                )
+                return None
+            if not self._protocol:
+                _LOGGER.error("Protocol not available for register read")
                 return None
 
-            # Connect if not connected
-            if not self._transport.is_connected:
-                await self._connection_manager.connect(self._address)
+            if not await self._connection_manager.ensure_connected(self._address):
+                _LOGGER.warning(
+                    "Could not connect for single register read 0x%04X", register
+                )
+                return None
 
-            # Read single register (1 word)
-            result = await self._transport.read_holding_registers(
-                address=register,
+            request_frame = self._protocol.build_read_command(
+                start_address=register,
                 count=1,
             )
+            response = await self._transport.send(
+                request_frame, timeout=MODBUS_RESPONSE_TIMEOUT
+            )
+            if not response:
+                return None
 
-            if result and len(result) > 0:
-                return result[0]
+            decoded = self._protocol.decode_response(
+                response, command=request_frame
+            )
+            if "error" in decoded:
+                # Match onboarding/feature-detector convention (unsupported / dash)
+                return 0x2D2D
+
+            if decoded and 0 in decoded:
+                return decoded[0]
 
             return None
 

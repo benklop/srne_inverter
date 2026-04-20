@@ -186,7 +186,7 @@ class ConfigurableSwitch(ConfigurableBaseEntity, SwitchEntity):
                 self._optimistic_state = None
                 self.async_write_ha_state()
                 detail = (write_result.error or "").strip() or (
-                    "Write failed. Confirm BLE connection and inverter password if required."
+                    "Write failed. Confirm inverter connection and password if required."
                 )
                 raise HomeAssistantError(
                     f"Failed to write to register 0x{register_address:04X}: {detail}"

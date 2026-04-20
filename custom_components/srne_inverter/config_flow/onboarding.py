@@ -35,6 +35,11 @@ from ..onboarding import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Modbus holding registers (SRNE protocol v1.96) — used during onboarding probe
+_REG_MACH_MODEL_NUM2 = 0x001B
+_REG_PRODUCT_SN_STR = 0x0035
+_REG_PRODUCT_SN_LEN = 20
+
 # Config flow: USB serial dropdown uses this value to show the manual path field.
 USB_SERIAL_MANUAL_VALUE = "__manual__"
 
@@ -476,6 +481,11 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             device_port=self._selected_port,
         )
 
+        # BLE/USB/TCP paths land on welcome with state still DEVICE_SELECTED; move to WELCOME
+        # so later transitions (e.g. to HARDWARE_DETECTION and DETECTION_REVIEW) validate.
+        if self._state_machine.current_state == OnboardingState.DEVICE_SELECTED:
+            self._state_machine.transition(OnboardingState.WELCOME)
+
         _LOGGER.info("Starting onboarding for device: %s (%s)", device_name, address)
 
         return self.async_show_form(
@@ -550,6 +560,9 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         results = None
         detection_method = "failed"
 
+        self._onboarding_context.detection_model_code = None
+        self._onboarding_context.detection_product_serial = None
+
         try:
             # Create temporary test coordinator for hardware probing
             _LOGGER.info("Creating temporary connection for hardware feature detection")
@@ -557,6 +570,8 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if test_coordinator:
                 try:
+                    await self._probe_device_identity(test_coordinator)
+
                     # Create detector with test coordinator
                     detector_with_hw = FeatureDetector(test_coordinator)
 
@@ -607,6 +622,37 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Transition to detection review (don't call async_configure, let progress_done handle it)
         self._state_machine.transition(OnboardingState.DETECTION_REVIEW)
 
+    async def _probe_device_identity(self, test_coordinator) -> None:
+        """Read model code and product serial over Modbus to confirm the link."""
+        from ..domain.helpers.transformations import decode_string_low_bytes
+
+        ctx = self._onboarding_context
+        model = await test_coordinator.async_read_register(_REG_MACH_MODEL_NUM2)
+        if model is not None and model != 0x2D2D:
+            ctx.detection_model_code = int(model) & 0xFFFF
+            _LOGGER.info(
+                "Auto-detect identity: MachModelNum2 (0x001B) = %d (0x%04X)",
+                ctx.detection_model_code,
+                ctx.detection_model_code,
+            )
+
+        block = await test_coordinator.async_read_register_block(
+            _REG_PRODUCT_SN_STR, _REG_PRODUCT_SN_LEN
+        )
+        if block:
+            serial = decode_string_low_bytes(block)
+            if serial:
+                ctx.detection_product_serial = serial
+                _LOGGER.info(
+                    "Auto-detect identity: ProductSNStr (0x0035) = %s",
+                    serial,
+                )
+
+        if ctx.detection_model_code is None and not ctx.detection_product_serial:
+            _LOGGER.warning(
+                "Auto-detect identity: could not read model or serial (check transport and slave ID)"
+            )
+
     async def _create_test_coordinator(self):
         """Create a temporary coordinator for hardware feature testing.
 
@@ -617,6 +663,7 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             from ..infrastructure.transport.ble_transport import BLETransport
             from ..infrastructure.transport.serial_transport import SerialTransport
+            from ..infrastructure.transport.tcp_rtu_transport import TcpRtuTransport
             from ..infrastructure.transport.connection_manager import (
                 ConnectionManager,
                 SerialConnectionManager,
@@ -630,21 +677,29 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             crc = ModbusCRC16()
             protocol = ModbusRTUProtocol(crc)
 
-            if self._onboarding_context.connection_type == CONNECTION_TYPE_USB:
+            conn = self._onboarding_context.connection_type
+            if conn == CONNECTION_TYPE_USB:
                 transport = SerialTransport(self.hass, timing_collector)
+            elif conn == CONNECTION_TYPE_TCP:
+                tcp_port = self._onboarding_context.device_port
+                if tcp_port is None:
+                    tcp_port = DEFAULT_TCP_PORT
+                transport = TcpRtuTransport(
+                    self.hass, timing_collector=timing_collector, port=int(tcp_port)
+                )
             else:
                 transport = BLETransport(
                     self.hass,
                     timing_collector,
                 )
 
-            if self._onboarding_context.connection_type == CONNECTION_TYPE_USB:
+            if conn in (CONNECTION_TYPE_USB, CONNECTION_TYPE_TCP):
                 connection_manager = SerialConnectionManager(transport)
             else:
                 connection_manager = ConnectionManager(transport)
 
-            # BLE transport tracks address on the instance for bleak helpers; USB uses the path only via connect.
-            if self._onboarding_context.connection_type != CONNECTION_TYPE_USB:
+            # BLE transport tracks address on the instance for bleak helpers.
+            if conn == CONNECTION_TYPE_BLE:
                 transport._address = self._onboarding_context.device_address
 
             # Create minimal test coordinator wrapper
@@ -701,6 +756,48 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                     except Exception as err:
                         _LOGGER.debug("Test read register 0x%04X error: %s", register, err)
+                        return None
+
+                async def async_read_register_block(
+                    self, start_address: int, count: int
+                ) -> list[int] | None:
+                    """Read ``count`` consecutive holding registers (1–125)."""
+                    if count < 1 or count > 125:
+                        return None
+                    try:
+                        if not self._transport.is_connected:
+                            await self._connection_manager.ensure_connected(
+                                self._address
+                            )
+
+                        request_frame = self._protocol.build_read_command(
+                            start_address=start_address,
+                            count=count,
+                        )
+                        response = await self._transport.send(request_frame)
+                        if not response:
+                            return None
+
+                        decoded = self._protocol.decode_response(
+                            response, command=request_frame
+                        )
+                        if "error" in decoded:
+                            return None
+
+                        words: list[int] = []
+                        for i in range(count):
+                            if i not in decoded:
+                                return None
+                            words.append(decoded[i])
+                        return words
+
+                    except Exception as err:
+                        _LOGGER.debug(
+                            "Test read block 0x%04X x%d error: %s",
+                            start_address,
+                            count,
+                            err,
+                        )
                         return None
 
                 async def async_write_register(
@@ -831,8 +928,9 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             _LOGGER.debug("Cleaning up test coordinator connection")
-            if hasattr(test_coordinator, "_connection_manager"):
-                await test_coordinator._connection_manager.disconnect()
+            transport = getattr(test_coordinator, "_transport", None)
+            if transport is not None and getattr(transport, "is_connected", False):
+                await transport.disconnect()
             _LOGGER.debug("Test coordinator cleanup complete")
         except Exception as err:
             _LOGGER.warning("Error during test coordinator cleanup: %s", err)
@@ -1098,12 +1196,30 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
 
+    def _identity_lines_for_detection_review(self) -> list[str]:
+        """Lines describing model / serial read during auto-detect (empty if none)."""
+        ctx = self._onboarding_context
+        lines: list[str] = []
+        if ctx.detection_model_code is not None:
+            lines.append(
+                f"Model code (register 0x001B): {ctx.detection_model_code} "
+                f"(0x{ctx.detection_model_code:04X})"
+            )
+        if ctx.detection_product_serial:
+            lines.append(f"Serial (ProductSNStr): {ctx.detection_product_serial}")
+        return lines
+
     def _format_features_basic(self) -> str:
         """Format features for basic users."""
-        if not self._onboarding_context.detected_features:
-            return "⚠️ Detection did not complete. Using safe defaults."
+        head = self._identity_lines_for_detection_review()
+        if head:
+            head.append("")  # blank line before feature list
 
-        lines = ["Your inverter has the following capabilities:\n"]
+        if not self._onboarding_context.detected_features:
+            body = "⚠️ Detection did not complete. Using safe defaults."
+            return "\n".join(head + [body]) if head else body
+
+        lines = head + ["Your inverter has the following capabilities:\n"]
         for feature, detected in self._onboarding_context.detected_features.items():
             status = "✓" if detected else "✗"
             name = feature.replace("_", " ").title()
@@ -1112,12 +1228,17 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _format_features_advanced(self) -> str:
         """Format features with technical details for advanced users."""
+        head = self._identity_lines_for_detection_review()
+        if head:
+            head.append("")
+
         if not self._onboarding_context.detected_features:
-            return "⚠️ Detection did not complete. You can configure features manually."
+            body = "⚠️ Detection did not complete. You can configure features manually."
+            return "\n".join(head + [body]) if head else body
 
         from ..onboarding.detection import FEATURE_TEST_REGISTERS
 
-        lines = ["Auto-detected features (you can override below):\n"]
+        lines = head + ["Auto-detected features (you can override below):\n"]
         for feature, detected in self._onboarding_context.detected_features.items():
             status = "✓" if detected else "✗"
             name = feature.replace("_", " ").title()
@@ -1607,11 +1728,9 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "inverter_password": password,
             }
 
-            if (
-                self._onboarding_context.connection_type == CONNECTION_TYPE_TCP
-                and self._onboarding_context.device_port is not None
-            ):
-                data[CONF_PORT] = int(self._onboarding_context.device_port)
+            if self._onboarding_context.connection_type == CONNECTION_TYPE_TCP:
+                port = self._onboarding_context.device_port
+                data[CONF_PORT] = int(port) if port is not None else DEFAULT_TCP_PORT
 
             return self.async_create_entry(
                 title=self._onboarding_context.device_name,

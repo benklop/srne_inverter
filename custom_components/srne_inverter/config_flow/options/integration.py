@@ -196,7 +196,7 @@ class IntegrationOptionsMixin:
                     "Required for battery type, voltages, and other critical settings.\n\n"
                     "⚙️ COMMUNICATION SETTINGS:\n"
                     "These settings control how the integration communicates with the inverter.\n"
-                    "Default values are optimized for BLE performance.\n"
+                    "Default values are tuned for typical Modbus round-trip times.\n"
                     "Only modify if experiencing connection issues.\n\n"
                     "⚠️ CLEAR FAILED REGISTERS:\n"
                     "Check this box to clear the cached list of unsupported registers.\n"
