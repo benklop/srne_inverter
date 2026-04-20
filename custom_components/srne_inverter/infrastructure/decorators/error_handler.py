@@ -61,6 +61,12 @@ def handle_transport_errors(
                 if reraise:
                     raise
                 return default_return
+            except ConnectionError as err:
+                # TCP reset, broken pipe, etc. — expected on flaky Wi‑Fi gateways
+                log.warning("%s connection lost: %s", operation_name, err)
+                if reraise:
+                    raise
+                return default_return
             except Exception as err:
                 log.error(
                     "%s unexpected error: %s",

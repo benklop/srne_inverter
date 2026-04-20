@@ -598,7 +598,10 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             if not result.success:
-                raise UpdateFailed(result.error)
+                err_msg = result.error or "Unknown refresh error"
+                if "connection lost" in err_msg.lower():
+                    raise UpdateFailed(err_msg, retry_after=60)
+                raise UpdateFailed(err_msg)
 
             # CRITICAL FIX: Persist newly discovered failed registers
             # Without this, batches are re-split every cycle
@@ -626,6 +629,8 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # - Connection errors (60s): Lost connection, needs stabilization time
         # - Other errors: Use normal update_interval (60s from __init__)
         # Note: retry_after requires Home Assistant 2025.11+
+        except UpdateFailed:
+            raise
         except TimeoutError as err:
             # Temporary issue (device busy/slow) - retry sooner
             _LOGGER.warning("Timeout communicating with inverter: %s", err)

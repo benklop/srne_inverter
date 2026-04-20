@@ -184,6 +184,22 @@ class TcpRtuTransport(ITransport):
         self._connected = False
         self._rxbuf.clear()
 
+    async def _invalidate_socket(self) -> None:
+        """Clear dead socket after peer reset or I/O error so callers can reconnect."""
+        self._connected = False
+        self._rxbuf.clear()
+        if self._writer is not None:
+            try:
+                self._writer.close()
+            except Exception:
+                pass
+            try:
+                await self._writer.wait_closed()
+            except Exception:
+                pass
+        self._reader = None
+        self._writer = None
+
     @handle_transport_errors("TCP RTU send", reraise=True)
     async def send(self, data: bytes, timeout: float = MODBUS_RESPONSE_TIMEOUT) -> bytes:
         if not data:
@@ -192,40 +208,49 @@ class TcpRtuTransport(ITransport):
             raise RuntimeError("TCP RTU transport not connected")
 
         # Ensure requests are serialized on a single TCP stream.
-        async with self._lock:
-            self._writer.write(data)
-            await asyncio.wait_for(self._writer.drain(), timeout=timeout)
+        try:
+            async with self._lock:
+                self._writer.write(data)
+                await asyncio.wait_for(self._writer.drain(), timeout=timeout)
 
-            # Read until we can extract one CRC-valid RTU response.
-            cap = 2048
-            end = asyncio.get_running_loop().time() + float(timeout)
-            while True:
-                frame = self._extract_one_frame(data)
-                if frame is not None:
-                    _LOGGER.debug(
-                        "TCP RTU RX from %s:%d: %s", self._host, self._port, frame.hex()
-                    )
-                    return frame
+                # Read until we can extract one CRC-valid RTU response.
+                cap = 2048
+                end = asyncio.get_running_loop().time() + float(timeout)
+                while True:
+                    frame = self._extract_one_frame(data)
+                    if frame is not None:
+                        _LOGGER.debug(
+                            "TCP RTU RX from %s:%d: %s", self._host, self._port, frame.hex()
+                        )
+                        return frame
 
-                if len(self._rxbuf) > cap:
-                    # Avoid unbounded growth if gateway spews bytes.
-                    self._rxbuf = self._rxbuf[-512:]
+                    if len(self._rxbuf) > cap:
+                        # Avoid unbounded growth if gateway spews bytes.
+                        self._rxbuf = self._rxbuf[-512:]
 
-                remaining = end - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    break
+                    remaining = end - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        break
 
-                try:
-                    chunk = await asyncio.wait_for(
-                        self._reader.read(256), timeout=min(remaining, 0.5)
-                    )
-                except asyncio.TimeoutError:
-                    continue
-                if not chunk:
-                    break
-                self._rxbuf += chunk
+                    try:
+                        chunk = await asyncio.wait_for(
+                            self._reader.read(256), timeout=min(remaining, 0.5)
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+                    if not chunk:
+                        break
+                    self._rxbuf += chunk
 
-            raise asyncio.TimeoutError("No valid RTU response received")
+                raise asyncio.TimeoutError("No valid RTU response received")
+        except ConnectionError:
+            await self._invalidate_socket()
+            raise
+        except OSError as err:
+            # Linux: ECONNRESET=104, EPIPE=32, ENOTCONN=107 (peer closed / stale socket)
+            if err.errno in (104, 32, 107):
+                await self._invalidate_socket()
+            raise
 
     @property
     def is_connected(self) -> bool:

@@ -194,7 +194,7 @@ class RefreshDataUseCase:
                 # CRITICAL: Check connection before each batch
                 # If disconnected, stop immediately instead of processing remaining batches
                 if not self._transport.is_connected:
-                    _LOGGER.error(
+                    _LOGGER.warning(
                         "Transport disconnected before batch %d/%d, aborting refresh",
                         i,
                         len(register_batches),
@@ -244,9 +244,9 @@ class RefreshDataUseCase:
                             sum(self._batch_timings) / len(self._batch_timings),
                             len(self._batch_timings),
                         )
-                except RuntimeError as err:
+                except (RuntimeError, ConnectionError) as err:
                     # Connection error during read - stop processing batches
-                    _LOGGER.error(
+                    _LOGGER.warning(
                         "Connection lost during batch %d (0x%04X), aborting refresh: %s",
                         i,
                         int(batch.start_address),
@@ -324,9 +324,9 @@ class RefreshDataUseCase:
                                 "Batch splitting found no valid registers in batch %d",
                                 i,
                             )
-                    except RuntimeError as err:
+                    except (RuntimeError, ConnectionError) as err:
                         # Connection lost during splitting - stop processing
-                        _LOGGER.error(
+                        _LOGGER.warning(
                             "Connection lost during batch split for batch %d (0x%04X), aborting refresh: %s",
                             i,
                             int(batch.start_address),
@@ -518,6 +518,15 @@ class RefreshDataUseCase:
             self._failed_reads += 1
             return None
 
+        except ConnectionError as err:
+            # TCP reset / broken pipe — do not treat as "bad batch" and split forever
+            _LOGGER.warning(
+                "Connection lost during batch read 0x%04X: %s",
+                start_address,
+                err,
+            )
+            raise
+
         except RuntimeError as err:
             # Connection error - propagate up to stop batch splitting
             # RuntimeError is raised by transport when connection is lost
@@ -600,7 +609,7 @@ class RefreshDataUseCase:
         if count == 1:
             try:
                 result = await self._read_batch(start_address, 1, slave_id)
-            except RuntimeError as err:
+            except (RuntimeError, ConnectionError) as err:
                 _LOGGER.warning(
                     "Connection error reading register %s, stopping split: %s",
                     self._get_register_name(start_address),
@@ -665,7 +674,7 @@ class RefreshDataUseCase:
                     first_half_size,
                     slave_id,
                 )
-            except RuntimeError as err:
+            except (RuntimeError, ConnectionError) as err:
                 _LOGGER.warning(
                     "Connection error reading first half at 0x%04X, stopping split: %s",
                     start_address,
@@ -694,7 +703,7 @@ class RefreshDataUseCase:
                         split_depth + 1,
                     )
                     data.update(first_data)
-                except RuntimeError:
+                except (RuntimeError, ConnectionError):
                     raise
 
         # CRITICAL: Check connection again before trying second half
@@ -718,7 +727,7 @@ class RefreshDataUseCase:
                     second_half_size,
                     slave_id,
                 )
-            except RuntimeError as err:
+            except (RuntimeError, ConnectionError) as err:
                 _LOGGER.warning(
                     "Connection error reading second half at 0x%04X, stopping split: %s",
                     second_half_start,
@@ -747,7 +756,7 @@ class RefreshDataUseCase:
                         split_depth + 1,
                     )
                     data.update(second_data)
-                except RuntimeError:
+                except (RuntimeError, ConnectionError):
                     raise
 
         return data
