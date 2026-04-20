@@ -14,6 +14,9 @@ DEFAULT_NAME = "SRNE Inverter"
 DEFAULT_SLAVE_ID = 1
 UNIVERSAL_SLAVE_ID = 255
 
+# Config entry: nominal DC system voltage (12/24/36/48) for UI scaling of per-12V registers
+CONF_BATTERY_NOMINAL_VOLTAGE = "battery_voltage"
+
 # Config entry: how the inverter is reached
 CONF_CONNECTION_TYPE = "connection_type"
 CONNECTION_TYPE_BLE = "ble"

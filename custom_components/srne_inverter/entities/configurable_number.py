@@ -21,7 +21,11 @@ from homeassistant.exceptions import HomeAssistantError
 from ..config_loader import get_register_definition
 from .configurable_base import ConfigurableBaseEntity
 from ..coordinator import SRNEDataUpdateCoordinator
-from ..const import WRITE_VERIFY_DELAY_UI
+from ..const import CONF_BATTERY_NOMINAL_VOLTAGE, WRITE_VERIFY_DELAY_UI
+
+# Extra delay between verify read attempts (inverter may commit after first poll)
+_WRITE_VERIFY_RETRY_DELAY = 0.25
+_WRITE_VERIFY_MAX_ATTEMPTS = 4
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +35,8 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
 
     This entity allows reading and writing numeric register values with:
     - Automatic scaling (e.g., 0.1 for current values)
+    - Optional per-12V battery setpoints: registers marked ``per_12v_reference`` in YAML
+      are shown and edited in pack volts using ``battery_voltage`` from the config entry
     - Min/max/step validation
     - Optimistic state updates for instant UI feedback
     - Read-verify after write for safety
@@ -56,10 +62,26 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
 
         self._device_config = device_config
 
-        # Number-specific attributes from config
-        self._attr_native_min_value = float(config["min"])
-        self._attr_native_max_value = float(config["max"])
-        self._attr_native_step = float(config.get("step", 1))
+        # Register definition (needed before min/max: per-12V pack scaling)
+        reg_def = get_register_definition(device_config, config["register"])
+        self._per_12v_reference = bool(
+            config.get("per_12v_reference")
+            or (reg_def or {}).get("per_12v_reference", False)
+        )
+        self._pack_scale = (
+            self._entry_pack_nominal_voltage_v() / 12.0
+            if self._per_12v_reference
+            else 1.0
+        )
+
+        # Number-specific attributes from config (min/max in YAML are per-12V when
+        # register has per_12v_reference; we expose pack-side volts in the UI)
+        min_raw = float(config["min"])
+        max_raw = float(config["max"])
+        step_raw = float(config.get("step", 1))
+        self._attr_native_min_value = min_raw * self._pack_scale
+        self._attr_native_max_value = max_raw * self._pack_scale
+        self._attr_native_step = step_raw * self._pack_scale
 
         # Mode: slider, box, or auto (defaults to auto)
         mode_str = config.get("mode", "auto")
@@ -78,7 +100,6 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
 
         # Get scaling factor from register definition (single source of truth)
         # If entity config overrides it, use that
-        reg_def = get_register_definition(device_config, self._register_name)
         if reg_def:
             self._scale = config.get("scale", reg_def.get("scaling", 1.0))
             self._signed = config.get(
@@ -108,6 +129,27 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
 
         # Verify configuration on startup
         self._verify_register_config()
+
+    def _entry_pack_nominal_voltage_v(self) -> int:
+        """Nominal DC system voltage from the integration config (12/24/36/48).
+
+        SRNE stores many battery voltage setpoints in a per-12V reference; we scale
+        the UI to pack volts using this value (from onboarding / options).
+        """
+        data = self._entry.data
+        opts = getattr(self._entry, "options", None) or {}
+        raw = data.get(CONF_BATTERY_NOMINAL_VOLTAGE) or opts.get(
+            CONF_BATTERY_NOMINAL_VOLTAGE
+        )
+        if raw is None:
+            return 12
+        try:
+            v = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return 12
+        if v <= 0:
+            return 12
+        return v
 
     def _verify_register_config(self) -> None:
         """Verify register configuration is valid."""
@@ -149,7 +191,10 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
         #   - Entity displays: 60.0 (NO additional scaling)
         #   - User writes: 60.0
         #   - Entity encodes: 60.0 ÷ 0.01 = 6000 (written to inverter)
-        return float(coordinator_value)
+        v = float(coordinator_value)
+        if self._per_12v_reference:
+            v *= self._pack_scale
+        return v
 
     async def async_set_native_value(self, value: float) -> None:
         """Write new value to inverter register.
@@ -258,53 +303,74 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
             )
 
     async def _verify_write(self, register_address: int, expected_value: int) -> bool:
-        """Verify write by reading back the register value.
+        """Verify write by reading the register from the device.
 
-        Args:
-            register_address: Register address that was written
-            expected_value: Expected raw register value
-
-        Returns:
-            True if verification passed, False otherwise
+        ``coordinator.data`` is only updated on the polling cycle, so comparing
+        against it after a write falsely fails even when the inverter accepted
+        the value. We read the holding register directly instead.
         """
         try:
-            # Read current value from coordinator data
-            # NOTE: coordinator.data contains SCALED values, not raw register values
-            data_key = self._config["entity_id"]
-            current_scaled = self._get_coordinator_value(data_key)
-
-            if current_scaled is None:
-                _LOGGER.debug(
-                    "Cannot verify %s: value not available in coordinator data",
-                    self._attr_name,
-                )
-                # Don't fail verification if we can't read - coordinator will update
-                return True
-
-            # Convert expected raw value to scaled value for comparison
-            # e.g., raw 6000 with scale 0.01 → scaled 60.0
             expected_scaled = float(expected_value) * self._scale
+            tolerance = max(self._attr_native_step / 2, 1e-6)
 
-            # Compare scaled values (allow small floating point tolerance)
-            tolerance = self._attr_native_step / 2
-            if abs(float(current_scaled) - expected_scaled) <= tolerance:
+            for attempt in range(_WRITE_VERIFY_MAX_ATTEMPTS):
+                if attempt == 0:
+                    await asyncio.sleep(WRITE_VERIFY_DELAY_UI)
+                else:
+                    await asyncio.sleep(_WRITE_VERIFY_RETRY_DELAY)
+
+                readback_raw = await self.coordinator.async_read_register(
+                    register_address
+                )
+
+                if readback_raw is None:
+                    _LOGGER.warning(
+                        "Write verify attempt %d: no response for %s (0x%04X)",
+                        attempt + 1,
+                        self._attr_name,
+                        register_address,
+                    )
+                    continue
+
+                if readback_raw == 0x2D2D:
+                    _LOGGER.debug(
+                        "Write verify got unsupported/dash pattern for %s (0x%04X)",
+                        self._attr_name,
+                        register_address,
+                    )
+                    return False
+
+                readback_scaled = float(readback_raw) * self._scale
+
+                if abs(readback_scaled - expected_scaled) <= tolerance:
+                    if attempt > 0:
+                        _LOGGER.debug(
+                            "Write verified for %s on attempt %d",
+                            self._attr_name,
+                            attempt + 1,
+                        )
+                    return True
+
                 _LOGGER.debug(
-                    "Write verified for %s: register 0x%04X = %d (scaled: %s)",
+                    "Write verify attempt %d for %s: expected raw %d (scaled %s), "
+                    "read raw %d (scaled %s)",
+                    attempt + 1,
                     self._attr_name,
-                    register_address,
                     expected_value,
                     expected_scaled,
+                    readback_raw,
+                    readback_scaled,
                 )
-                return True
-            else:
-                _LOGGER.debug(
-                    "Write verification failed for %s: wrote %d (scaled: %s), read back %s",
-                    self._attr_name,
-                    expected_value,
-                    expected_scaled,
-                    current_scaled,
-                )
-                return False
+
+            _LOGGER.warning(
+                "Write verification failed for %s after %d attempts "
+                "(expected raw %d / scaled %s)",
+                self._attr_name,
+                _WRITE_VERIFY_MAX_ATTEMPTS,
+                expected_value,
+                expected_scaled,
+            )
+            return False
 
         except Exception as err:
             _LOGGER.error(
@@ -312,7 +378,6 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
                 self._attr_name,
                 err,
             )
-            # Don't fail verification on read errors - coordinator will update
             return True
 
     async def _handle_write_failure(
@@ -347,9 +412,12 @@ class ConfigurableNumber(ConfigurableBaseEntity, NumberEntity):
         Returns:
             Register value (e.g., 300 for 0.1 scale)
         """
-        # Apply inverse scaling
+        # Apply inverse scaling (native value may be pack volts for per-12V registers)
+        value_in = value
+        if self._per_12v_reference:
+            value_in = value / self._pack_scale
         # e.g., 30.0A with scale 0.1 → 300
-        register_value = int(round(value / self._scale))
+        register_value = int(round(value_in / self._scale))
 
         # Handle signed values (two's complement for negative numbers)
         if self._signed and register_value < 0:
