@@ -103,6 +103,8 @@
       "no_devices_found": "No SRNE devices found. Make sure your inverter is powered on and the BLE adapter is working.",
       "serial_port_required": "Enter the serial device path on this system (e.g. /dev/ttyUSB0).",
       "serial_port_invalid": "Use an absolute path starting with / (for example /dev/ttyUSB0).",
+      "host_required": "Enter the IP address or hostname of the TCP gateway (for example 192.168.8.222).",
+      "port_invalid": "Enter a TCP port number between 1 and 65535.",
       "unknown": "Unexpected error occurred",
       "detection_failed": "Hardware detection failed. Please check the connection and try again.",
       "no_coordinator": "Unable to create device coordinator for detection.",

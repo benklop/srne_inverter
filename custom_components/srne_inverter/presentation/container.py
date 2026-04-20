@@ -235,7 +235,7 @@ def _create_transport(
     entry: ConfigEntry,
     timing_collector: Any = None,
 ) -> Any:
-    """Create transport from config entry (BLE or USB serial).
+    """Create transport from config entry (BLE, USB serial, or TCP).
 
     Args:
         hass: Home Assistant instance
@@ -243,13 +243,24 @@ def _create_transport(
         timing_collector: Optional TimingCollector for Phase 2 measurement
 
     Returns:
-        ITransport implementation (BLETransport or SerialTransport)
+        ITransport implementation (BLETransport, SerialTransport, or TcpRtuTransport)
     """
-    from ..const import CONF_CONNECTION_TYPE, CONNECTION_TYPE_USB
-    from ..infrastructure.transport import BLETransport, SerialTransport
+    from homeassistant.const import CONF_PORT
 
-    if entry.data.get(CONF_CONNECTION_TYPE) == CONNECTION_TYPE_USB:
+    from ..const import (
+        CONF_CONNECTION_TYPE,
+        CONNECTION_TYPE_TCP,
+        CONNECTION_TYPE_USB,
+        DEFAULT_TCP_PORT,
+    )
+    from ..infrastructure.transport import BLETransport, SerialTransport, TcpRtuTransport
+
+    conn = entry.data.get(CONF_CONNECTION_TYPE)
+    if conn == CONNECTION_TYPE_USB:
         return SerialTransport(hass, timing_collector=timing_collector)
+    if conn == CONNECTION_TYPE_TCP:
+        port = int(entry.data.get(CONF_PORT, DEFAULT_TCP_PORT))
+        return TcpRtuTransport(hass, timing_collector=timing_collector, port=port)
 
     return BLETransport(hass, timing_collector=timing_collector)
 
@@ -264,10 +275,11 @@ def _create_connection_manager(transport: Any, entry: ConfigEntry) -> Any:
     Returns:
         IConnectionManager implementation
     """
-    from ..const import CONF_CONNECTION_TYPE, CONNECTION_TYPE_USB
+    from ..const import CONF_CONNECTION_TYPE, CONNECTION_TYPE_TCP, CONNECTION_TYPE_USB
     from ..infrastructure.transport import ConnectionManager, SerialConnectionManager
 
-    if entry.data.get(CONF_CONNECTION_TYPE) == CONNECTION_TYPE_USB:
+    conn = entry.data.get(CONF_CONNECTION_TYPE)
+    if conn in (CONNECTION_TYPE_USB, CONNECTION_TYPE_TCP):
         return SerialConnectionManager(transport)
     return ConnectionManager(transport)
 

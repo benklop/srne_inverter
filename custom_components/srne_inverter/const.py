@@ -18,6 +18,10 @@ UNIVERSAL_SLAVE_ID = 255
 CONF_CONNECTION_TYPE = "connection_type"
 CONNECTION_TYPE_BLE = "ble"
 CONNECTION_TYPE_USB = "usb"
+CONNECTION_TYPE_TCP = "tcp"
+
+# TCP settings (Modbus RTU over TCP socket)
+DEFAULT_TCP_PORT = 8899
 
 # Serial port settings
 BAUDRATE = 9600

@@ -18,7 +18,8 @@ class OnboardingContext:
     # Device information
     device_address: str
     device_name: str
-    connection_type: str = "ble"  # CONNECTION_TYPE_BLE | CONNECTION_TYPE_USB
+    connection_type: str = "ble"  # CONNECTION_TYPE_BLE | CONNECTION_TYPE_USB | CONNECTION_TYPE_TCP
+    device_port: int | None = None  # TCP port (for CONNECTION_TYPE_TCP)
     device_rssi: int | None = None
 
     # User selections

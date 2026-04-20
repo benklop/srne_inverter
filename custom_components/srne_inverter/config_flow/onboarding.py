@@ -10,7 +10,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components import bluetooth
-from homeassistant.const import CONF_ADDRESS
+from homeassistant.const import CONF_ADDRESS, CONF_HOST, CONF_PORT
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
@@ -21,7 +21,9 @@ from .base import CONFIGURATION_PRESETS, get_options_flow_handler
 from ..const import (
     CONF_CONNECTION_TYPE,
     CONNECTION_TYPE_BLE,
+    CONNECTION_TYPE_TCP,
     CONNECTION_TYPE_USB,
+    DEFAULT_TCP_PORT,
     DOMAIN,
 )
 from ..onboarding import (
@@ -74,6 +76,7 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self._discovered_devices: dict[str, str] = {}
         self._selected_address: str | None = None
+        self._selected_port: int | None = None
         self._connection_type: str = CONNECTION_TYPE_BLE
         self._onboarding_context: OnboardingContext | None = None
         self._state_machine = OnboardingStateMachine()
@@ -82,11 +85,14 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Choose connection type (BLE or USB serial), then continue to device selection."""
+        """Choose connection type (BLE, USB serial, or TCP), then continue to device selection."""
         if user_input is not None:
             if user_input[CONF_CONNECTION_TYPE] == CONNECTION_TYPE_USB:
                 return await self.async_step_usb_serial()
+            if user_input[CONF_CONNECTION_TYPE] == CONNECTION_TYPE_TCP:
+                return await self.async_step_tcp()
             self._connection_type = CONNECTION_TYPE_BLE
+            self._selected_port = None
             return await self.async_step_ble_device()
 
         data_schema = vol.Schema(
@@ -99,6 +105,10 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             {
                                 "value": CONNECTION_TYPE_BLE,
                                 "label": "Bluetooth Low Energy",
+                            },
+                            {
+                                "value": CONNECTION_TYPE_TCP,
+                                "label": "TCP (Modbus RTU over socket)",
                             },
                             {
                                 "value": CONNECTION_TYPE_USB,
@@ -213,10 +223,70 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             self._connection_type = CONNECTION_TYPE_USB
             self._selected_address = port
+            self._selected_port = None
             self._discovered_devices[port] = device_name
 
             self._state_machine.transition(OnboardingState.DEVICE_SELECTED)
             return await self.async_step_welcome()
+
+    async def async_step_tcp(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Configure TCP socket transport (Modbus RTU frames over TCP stream)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            host = str(user_input.get(CONF_HOST) or "").strip()
+            port_raw = user_input.get(CONF_PORT, DEFAULT_TCP_PORT)
+            name_raw = str(user_input.get("device_name") or "").strip()
+
+            try:
+                port = int(port_raw)
+            except (TypeError, ValueError):
+                port = -1
+
+            if not host:
+                errors[CONF_HOST] = "host_required"
+            if port < 1 or port > 65535:
+                errors[CONF_PORT] = "port_invalid"
+
+            device_name = name_raw or f"SRNE Inverter ({host}:{port})"
+
+            if errors:
+                return self.async_show_form(
+                    step_id="tcp",
+                    data_schema=vol.Schema(
+                        {
+                            vol.Required(CONF_HOST, default=host): cv.string,
+                            vol.Required(CONF_PORT, default=DEFAULT_TCP_PORT): cv.port,
+                            vol.Optional("device_name", default=name_raw): cv.string,
+                        }
+                    ),
+                    errors=errors,
+                )
+
+            unique = f"srne_tcp_{host}_{port}"
+            await self.async_set_unique_id(unique)
+            self._abort_if_unique_id_configured()
+
+            self._connection_type = CONNECTION_TYPE_TCP
+            self._selected_address = host
+            self._selected_port = port
+            self._discovered_devices[host] = device_name
+
+            self._state_machine.transition(OnboardingState.DEVICE_SELECTED)
+            return await self.async_step_welcome()
+
+        return self.async_show_form(
+            step_id="tcp",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST): cv.string,
+                    vol.Required(CONF_PORT, default=DEFAULT_TCP_PORT): cv.port,
+                    vol.Optional("device_name"): cv.string,
+                }
+            ),
+        )
 
         default_choice = ""
         default_manual = ""
@@ -422,6 +492,7 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             device_address=address,
             device_name=device_name,
             connection_type=self._connection_type,
+            device_port=self._selected_port,
         )
 
         _LOGGER.info("Starting onboarding for device: %s (%s)", device_name, address)
@@ -1543,19 +1614,27 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
 
             # Create entry with complete metadata
+            data = {
+                CONF_ADDRESS: self._onboarding_context.device_address,
+                CONF_CONNECTION_TYPE: self._onboarding_context.connection_type,
+                "user_level": self._onboarding_context.user_level,
+                "detected_features": self._onboarding_context.detected_features,
+                "detection_method": self._onboarding_context.detection_method,
+                "detection_timestamp": self._onboarding_context.detection_timestamp,
+                "onboarding_completed": True,
+                "onboarding_duration": self._onboarding_context.total_duration,
+                "inverter_password": password,
+            }
+
+            if (
+                self._onboarding_context.connection_type == CONNECTION_TYPE_TCP
+                and self._onboarding_context.device_port is not None
+            ):
+                data[CONF_PORT] = int(self._onboarding_context.device_port)
+
             return self.async_create_entry(
                 title=self._onboarding_context.device_name,
-                data={
-                    CONF_ADDRESS: self._onboarding_context.device_address,
-                    CONF_CONNECTION_TYPE: self._onboarding_context.connection_type,
-                    "user_level": self._onboarding_context.user_level,
-                    "detected_features": self._onboarding_context.detected_features,
-                    "detection_method": self._onboarding_context.detection_method,
-                    "detection_timestamp": self._onboarding_context.detection_timestamp,
-                    "onboarding_completed": True,
-                    "onboarding_duration": self._onboarding_context.total_duration,
-                    "inverter_password": password,
-                },
+                data=data,
                 options=options,
             )
 
