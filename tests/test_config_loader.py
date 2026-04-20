@@ -71,3 +71,19 @@ def test_apply_entity_defaults_skips_state_class_for_string_register():
     }
     _apply_entity_defaults(config)
     assert "state_class" not in config["sensors"][0]
+
+
+def test_apply_entity_defaults_skips_state_class_for_timestamp_device_class():
+    config = {
+        "_register_by_name": {},
+        "defaults": {"sensor": {"state_class": "measurement"}},
+        "sensors": [
+            {
+                "entity_id": "last_update",
+                "name": "Last Update",
+                "device_class": "timestamp",
+            }
+        ],
+    }
+    _apply_entity_defaults(config)
+    assert "state_class" not in config["sensors"][0]

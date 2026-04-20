@@ -26,11 +26,19 @@ _NON_NUMERIC_SENSOR_REGISTER_TYPES: frozenset[str] = frozenset(
     {"string", "string_low_bytes"}
 )
 
+# device_class values that must not use SensorStateClass.MEASUREMENT (HA rejects the combo).
+_SKIP_DEFAULT_STATE_CLASS_DEVICE_CLASSES: frozenset[str] = frozenset(
+    {"timestamp", "date", "enum"}
+)
+
 
 def _sensor_skip_default_state_class(
     entity: dict[str, Any], register_by_name: dict[str, Any]
 ) -> bool:
     """True if default measurement state_class must not apply (non-numeric state)."""
+    dc = entity.get("device_class")
+    if isinstance(dc, str) and dc.strip().lower() in _SKIP_DEFAULT_STATE_CLASS_DEVICE_CLASSES:
+        return True
     if entity.get("value_mapping") is not None:
         return True
     reg_key = entity.get("register") or entity.get("entity_id")
