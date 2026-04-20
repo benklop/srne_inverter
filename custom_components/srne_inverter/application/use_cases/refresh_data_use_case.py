@@ -22,6 +22,7 @@ from ...domain.exceptions import DeviceRejectedCommandError
 from ...domain.value_objects.exception_code import ExceptionCode
 from ...domain.entities.register_batch import RegisterBatch
 from ...domain.helpers.transformations import process_register_value
+from ...domain.helpers.transformations import decode_string_low_bytes
 from ...infrastructure.decorators import require_connection
 from ...const import MODBUS_RESPONSE_TIMEOUT
 from .refresh_data_result import RefreshDataResult
@@ -363,8 +364,8 @@ class RefreshDataUseCase:
             data["failed_reads"] = self._failed_reads
             data["last_update_time"] = datetime.now(timezone.utc)
 
-            # BLE RSSI (if available)
-            # Note: This will be removed when transport abstraction is complete
+            # Transport signal quality (BLE RSSI if available). For non-BLE transports
+            # this remains None.
             data["ble_rssi"] = None
 
             # Performance summary
@@ -774,20 +775,26 @@ class RefreshDataUseCase:
 
         for offset, register_name in batch.register_map.items():
             if offset < len(values):
-                raw_value = values[offset]
-
                 # Get register definition
                 reg_def = register_definitions.get(register_name, {})
+                data_type = (reg_def.get("data_type") or "uint16")
+
+                # Special case: SRNE string blocks (low byte of each word)
+                if data_type == "string_low_bytes":
+                    length = int(reg_def.get("length") or 1)
+                    block = values[offset : offset + length]
+                    data[register_name] = decode_string_low_bytes(block)
+                    continue
+
+                raw_value = values[offset]
 
                 # Apply transformations
                 scale = reg_def.get("scaling", reg_def.get("scale", 1.0))
-                value = process_register_value(
+                data[register_name] = process_register_value(
                     raw_value,
-                    data_type=reg_def.get("data_type", "uint16"),
+                    data_type=data_type,
                     scale=scale,
                     offset=reg_def.get("offset", 0),
                 )
-
-                data[register_name] = value
 
         return data

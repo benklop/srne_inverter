@@ -36,9 +36,7 @@ def test_self_sufficiency_formula(mock_config_entry):
         "name": "Self Sufficiency",
         "source_type": "calculated",
         "depends_on": ["pv_power", "load_power"],
-        "formula": (
-            "result = min(100, (pv_power / load_power * 100)) if load_power else 100"
-        ),
+        "formula": "{{ ([100, (pv_power / load_power * 100)] | min) if load_power else 100 }}",
         "unit_of_measurement": "%",
     }
     sensor = ConfigurableSensor(coordinator, mock_config_entry, cfg)
@@ -54,9 +52,7 @@ def test_self_sufficiency_clamped_to_100(mock_config_entry):
         "name": "Self Sufficiency",
         "source_type": "calculated",
         "depends_on": ["pv_power", "load_power"],
-        "formula": (
-            "result = min(100, (pv_power / load_power * 100)) if load_power else 100"
-        ),
+        "formula": "{{ ([100, (pv_power / load_power * 100)] | min) if load_power else 100 }}",
     }
     sensor = ConfigurableSensor(coordinator, mock_config_entry, cfg)
     assert sensor.native_value == 100.0
@@ -76,7 +72,7 @@ def test_battery_power_signed_sum(mock_config_entry):
         "name": "Battery Power",
         "source_type": "calculated",
         "depends_on": ["pv_power", "load_power", "grid_power"],
-        "formula": "result = pv_power - load_power - grid_power",
+        "formula": "{{ pv_power - load_power - grid_power }}",
         "unit_of_measurement": "W",
     }
     sensor = ConfigurableSensor(coordinator, mock_config_entry, cfg)

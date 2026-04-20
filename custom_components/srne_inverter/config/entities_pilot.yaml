@@ -79,6 +79,13 @@ device:
         - start: 61496 # pv_energy_total
           end: 61496
 config_pages:
+  device_info:
+    order: 0
+    icon: mdi:information-outline
+    translations:
+      en:
+        title: Device information
+        description: Read-only identification and hardware information
   battery_config:
     order: 1
     icon: mdi:battery-settings
@@ -161,6 +168,24 @@ config_validation:
           error: AC charge current cannot exceed maximum charge current
           hint: AC charging is limited by the overall maximum charge current setting
 registers:
+  product_sn_str:
+    address: 53
+    hex_address: "0035"
+    decimal_address: 53
+    name: ProductSNStr
+    type: read
+    length: 20
+    data_type: string_low_bytes
+    description: Product serial number string (low byte of each register)
+    config_flow:
+      page: device_info
+      danger_level: safe
+      display_order: 1
+      translations:
+        en:
+          title: Product serial number
+          description: Inverter serial number as reported by the device
+          hint: Read-only; used for device identification
   power_control:
     address: 57088
     hex_address: DF00
@@ -4203,6 +4228,14 @@ defaults:
   select:
     enabled_by_default: true
 sensors:
+  - entity_id: product_serial_number
+    name: Product Serial Number
+    description: Inverter serial number string reported via Modbus (ProductSNStr)
+    register: product_sn_str
+    source_type: register
+    enabled_by_default: true
+    entity_category: diagnostic
+    icon: mdi:barcode
   - entity_id: battery_soc
     name: Battery SOC
     description:
@@ -4580,9 +4613,9 @@ sensors:
       rules:
         - condition: is_none
           icon: mdi:battery
-        - condition: value > 10
+        - condition: "{{ value > 10 }}"
           icon: mdi:battery-arrow-down
-        - condition: value < -10
+        - condition: "{{ value < -10 }}"
           icon: mdi:battery-charging
       default: mdi:battery
   - entity_id: battery_charge_power
@@ -4623,11 +4656,11 @@ sensors:
       rules:
         - condition: is_none
           icon: mdi:wifi-strength-off
-        - condition: value >= -60
+        - condition: "{{ value >= -60 }}"
           icon: mdi:wifi-strength-4
-        - condition: value >= -70
+        - condition: "{{ value >= -70 }}"
           icon: mdi:wifi-strength-3
-        - condition: value >= -80
+        - condition: "{{ value >= -80 }}"
           icon: mdi:wifi-strength-2
       default: mdi:wifi-strength-1
   - entity_id: self_sufficiency
@@ -5096,9 +5129,9 @@ sensors:
       rules:
         - condition: is_none
           icon: mdi:scale-balance
-        - condition: value > 100
+        - condition: "{{ value > 100 }}"
           icon: mdi:arrow-up-bold
-        - condition: value < -100
+        - condition: "{{ value < -100 }}"
           icon: mdi:arrow-down-bold
       default: mdi:scale-balance
   - entity_id: pv_utilization_rate
@@ -5179,11 +5212,11 @@ sensors:
     icon:
       dynamic: true
       rules:
-        - condition: value < 20
+        - condition: "{{ value < 20 }}"
           icon: mdi:thermometer-low
-        - condition: value < 40
+        - condition: "{{ value < 40 }}"
           icon: mdi:thermometer
-        - condition: value < 60
+        - condition: "{{ value < 60 }}"
           icon: mdi:thermometer-high
       default: mdi:thermometer-alert
   - entity_id: system_health_score
@@ -5206,11 +5239,11 @@ sensors:
     icon:
       dynamic: true
       rules:
-        - condition: value >= 90
+        - condition: "{{ value >= 90 }}"
           icon: mdi:check-decagram
-        - condition: value >= 70
+        - condition: "{{ value >= 70 }}"
           icon: mdi:check-circle
-        - condition: value >= 50
+        - condition: "{{ value >= 50 }}"
           icon: mdi:alert-circle
       default: mdi:alert-octagon
   - entity_id: round_trip_efficiency

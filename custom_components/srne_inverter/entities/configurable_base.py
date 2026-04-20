@@ -14,8 +14,7 @@ from ..coordinator import SRNEDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# Manufacturer constant
-MANUFACTURER = "SRNE"
+MANUFACTURER_FALLBACK = "SRNE"
 
 
 class ConfigurableBaseEntity(CoordinatorEntity[SRNEDataUpdateCoordinator]):
@@ -75,14 +74,42 @@ class ConfigurableBaseEntity(CoordinatorEntity[SRNEDataUpdateCoordinator]):
                     self._attr_name,
                 )
 
-        # Device info (shared with all entities)
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": entry.title,
-            "manufacturer": MANUFACTURER,
-            "model": "HF Series Inverter",
-            "sw_version": "1.0",
+        # NOTE: DeviceInfo is computed dynamically (see device_info property) so it can
+        # use ProductSNStr once the first data refresh completes.
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        """Return device information for the device registry.
+
+        Prefer ProductSNStr (0x0035) as stable serial/identifier once available.
+        Fall back to config entry unique_id (stable across restarts), then entry_id.
+        """
+        dev = (getattr(self.coordinator, "device_config", None) or {}).get("device", {})
+        manufacturer = dev.get("manufacturer") or MANUFACTURER_FALLBACK
+        model = dev.get("model") or "HF Series Inverter"
+        sw_version = dev.get("protocol_version") or dev.get("sw_version") or None
+
+        sn = None
+        if self.coordinator.data:
+            sn_raw = self.coordinator.data.get("product_sn_str")
+            if isinstance(sn_raw, str):
+                sn_raw = sn_raw.strip()
+                if sn_raw:
+                    sn = sn_raw
+
+        stable_id = sn or self._entry.unique_id or self._entry.entry_id
+
+        info: dict[str, Any] = {
+            "identifiers": {(DOMAIN, stable_id)},
+            "name": self._entry.title,
+            "manufacturer": manufacturer,
+            "model": model,
         }
+        if sw_version:
+            info["sw_version"] = str(sw_version)
+        if sn:
+            info["serial_number"] = sn
+        return info
 
     @property
     def available(self) -> bool:

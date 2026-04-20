@@ -4,6 +4,7 @@ This module provides utilities for transforming register values including
 scaling, precision rounding, and data type conversions (signed/unsigned).
 """
 
+import string
 from typing import Union
 
 
@@ -151,6 +152,23 @@ def process_register_value(
         value = apply_precision(value, precision)
 
     return value
+
+
+def decode_string_low_bytes(words: list[int]) -> str:
+    """Decode SRNE 'string' registers where low bytes are characters.
+
+    SRNE protocol (e.g. ProductSNStr at 0x0035, length 20) documents string fields as:
+    - low byte of each 16-bit register valid
+    - high byte invalid
+    """
+    chars: list[str] = []
+    for w in words:
+        c = chr(int(w) & 0xFF)
+        if c == "\x00":
+            break
+        # Keep printable characters; replace other control chars with '?'
+        chars.append(c if c in string.printable and c not in "\r\n\t\x0b\x0c" else "?")
+    return "".join(chars).strip()
 
 
 def encode_register_value(

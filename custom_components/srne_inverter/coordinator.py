@@ -6,7 +6,7 @@
 # Improper use may cause damage or injury
 # USE AT YOUR OWN RISK
 
-"""DataUpdateCoordinator for SRNE Inverter BLE communication.
+"""DataUpdateCoordinator for SRNE Inverter communication.
 
 This coordinator manages:
 - BLE connection lifecycle
@@ -44,7 +44,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinator for SRNE Inverter data updates via BLE."""
+    """Coordinator for SRNE Inverter data updates (BLE, USB serial, or TCP)."""
 
     def __init__(
         self,
@@ -131,6 +131,11 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "Initialized coordinator for device %s (batches will be built after loading storage)",
             self._address,
         )
+
+    @property
+    def device_config(self) -> dict[str, Any]:
+        """Return loaded device configuration (entities_pilot.yaml merged with features)."""
+        return self._device_config
 
     def _apply_learned_timeouts(self, learned_timeouts: dict[str, float]) -> None:
         """Apply learned timeouts to transport (Phase 5: Runtime Application).
@@ -749,6 +754,6 @@ class SRNEDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             if self._transport and self._transport.is_connected:
                 await self._transport.disconnect()
-                _LOGGER.info("Disconnected from BLE device")
+                _LOGGER.info("Disconnected from inverter transport")
         except Exception as err:
             _LOGGER.error("Unexpected error during disconnect: %s", err)

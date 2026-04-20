@@ -15,6 +15,7 @@ from custom_components.srne_inverter.entities.learned_timeout_sensor import (
 def mock_entry():
     entry = MagicMock()
     entry.entry_id = "test_entry_id"
+    entry.unique_id = None
     entry.title = "Test SRNE Inverter"
     entry.data = {"name": "Test Inverter"}
     return entry
@@ -52,7 +53,8 @@ def test_learned_timeout_sensor_reads_coordinator_map(mock_entry):
 def test_learned_timeout_device_grouping(mock_entry):
     coordinator = MagicMock()
     coordinator.last_update_success = True
+    coordinator.data = {"connected": True}
     sensor = LearnedTimeoutSensor(
         coordinator, mock_entry, "ble_send", "BLE Send Timeout"
     )
-    assert sensor._attr_device_info == {"identifiers": {(DOMAIN, mock_entry.entry_id)}}
+    assert sensor.device_info["identifiers"] == {(DOMAIN, mock_entry.entry_id)}

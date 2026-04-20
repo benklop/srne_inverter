@@ -181,47 +181,35 @@ class ConfigurableSensor(ConfigurableBaseEntity, SensorEntity):
 
         # Evaluate formula
         try:
-            # Check if formula is a Jinja2 template
-            if "{{" in formula and "}}" in formula:
-                result = self._evaluate_template(formula, context)
-                # Handle None or "None" string from template
-                if result is None:
-                    return None
-                # Strip whitespace and check for string "None"
-                result_str = str(result).strip()
-                if result_str == "None" or result_str == "":
-                    return None
-                # Try to convert to float
-                try:
-                    return float(result_str)
-                except (ValueError, TypeError):
-                    # If not a float, return as string (e.g., datetime strings)
-                    # Check if it's a timestamp string that should be preserved
-                    if "T" in result_str or "-" in result_str:
-                        return result_str
-                    _LOGGER.debug(
-                        "Could not convert template result to float for %s: %r",
-                        self._attr_name,
-                        result,
-                    )
-                    return None
-            else:
-                # Execute as Python code
-                exec_globals = {
-                    "data": self.coordinator.data,
-                    "min": min,
-                    "max": max,
-                    "abs": abs,
-                    "round": round,
-                }
-                # Add dependencies to globals
-                if depends_on := self._config.get("depends_on"):
-                    for key in depends_on:
-                        exec_globals[key] = self._get_coordinator_value(key, 0)
+            # Jinja2 templates only (no Python exec)
+            if "{{" not in formula or "}}" not in formula:
+                _LOGGER.error(
+                    "Calculated sensor %s formula must be a Jinja2 template",
+                    self._attr_name,
+                )
+                return None
 
-                exec_locals = {}
-                exec(formula, exec_globals, exec_locals)
-                return exec_locals.get("result")
+            result = self._evaluate_template(formula, context)
+
+            if result is None:
+                return None
+
+            result_str = str(result).strip()
+            if result_str in ("None", ""):
+                return None
+
+            try:
+                return float(result_str)
+            except (ValueError, TypeError):
+                # Allow non-numeric results (e.g. timestamps) to pass through as strings.
+                if "T" in result_str or "-" in result_str:
+                    return result_str
+                _LOGGER.debug(
+                    "Could not convert template result to float for %s: %r",
+                    self._attr_name,
+                    result,
+                )
+                return None
         except Exception as err:
             _LOGGER.error(
                 "Error evaluating formula for sensor %s: %s",
@@ -276,21 +264,20 @@ class ConfigurableSensor(ConfigurableBaseEntity, SensorEntity):
             if value is None:
                 continue
 
-            # Evaluate condition
+            # Evaluate condition (Jinja-only). For safety, reject non-template strings.
             try:
-                # Create context for template evaluation
                 context = {"value": value}
+                if "{{" not in str(condition) or "}}" not in str(condition):
+                    _LOGGER.debug(
+                        "Ignoring non-template icon condition for %s: %r",
+                        self._attr_name,
+                        condition,
+                    )
+                    continue
 
-                # Support both template strings and simple comparisons
-                if "{{" in condition and "}}" in condition:
-                    # Jinja2 template
-                    result = self._evaluate_template(condition, context)
-                    if result and str(result).lower() in ("true", "1", "yes"):
-                        return rule.get("icon", "mdi:help")
-                else:
-                    # Simple Python expression
-                    if eval(condition, {"value": value, "__builtins__": {}}):
-                        return rule.get("icon", "mdi:help")
+                result = self._evaluate_template(str(condition), context)
+                if result and str(result).lower() in ("true", "1", "yes"):
+                    return rule.get("icon", "mdi:help")
             except Exception as err:
                 _LOGGER.debug(
                     "Error evaluating icon condition '%s' for %s: %s",

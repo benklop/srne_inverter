@@ -1,6 +1,6 @@
 """Modbus RTU protocol implementation.
 
-This module implements the Modbus RTU protocol over BLE for the SRNE inverter.
+This module implements Modbus RTU framing/CRC and response decoding for SRNE-family inverters.
 It handles command building, response decoding, and error handling.
 
 This implementation is extracted from the original coordinator.py ModbusProtocol
@@ -31,7 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class ModbusRTUProtocol(IProtocol):
-    """Modbus RTU protocol implementation for BLE communication.
+    """Modbus RTU protocol implementation for SRNE inverter communication.
 
     This implementation handles:
     - Building Modbus RTU frames (read/write commands)
@@ -41,8 +41,8 @@ class ModbusRTUProtocol(IProtocol):
 
     Framing:
         BLE: SRNE prepends up to 8 (sometimes fewer) 0x00 bytes before the ADU;
-        notify payloads may also contain bytes after the CRC. USB serial: plain
-        Modbus RTU only; framing is handled by the serial transport.
+        notify payloads may also contain bytes after the CRC.
+        USB serial / TCP RTU-over-socket: plain Modbus RTU; framing is handled by the transport.
 
     Attributes:
         crc: CRC calculator implementation

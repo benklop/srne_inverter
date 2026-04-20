@@ -288,25 +288,6 @@ class SRNEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         )
 
-        default_choice = ""
-        default_manual = ""
-        if port_options:
-            default_choice = port_options[0][0]
-
-        return self.async_show_form(
-            step_id="usb_serial",
-            data_schema=self._usb_serial_schema(
-                port_options=port_options,
-                default_port=default_choice,
-                default_choice=default_choice,
-                default_manual=default_manual,
-                default_name="",
-            ),
-            description_placeholders={
-                "port_count": str(len(port_options)),
-            },
-        )
-
     async def _async_list_usb_serial_ports(self) -> list[tuple[str, str]]:
         """Return (device path, label) pairs for USB/serial ports on this host."""
         try:

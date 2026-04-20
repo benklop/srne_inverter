@@ -63,11 +63,30 @@ class LearnedTimeoutSensor(SensorEntity):
         self._attr_name = f"{device_name} {name_suffix}"
         self._attr_unique_id = f"{entry.entry_id}_learned_timeout_{operation}"
 
-        # Device info for grouping
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
+        # DeviceInfo is computed dynamically (prefer ProductSNStr once available).
 
+    @property
+    def device_info(self) -> dict[str, Any]:
+        sn = None
+        if self._coordinator.data:
+            raw = self._coordinator.data.get("product_sn_str")
+            if isinstance(raw, str) and raw.strip():
+                sn = raw.strip()
+
+        stable_id = sn or self._entry.unique_id or self._entry.entry_id
+        dev = (getattr(self._coordinator, "device_config", None) or {}).get("device", {})
+        manufacturer = dev.get("manufacturer") or "SRNE"
+        model = dev.get("model") or "HF Series Inverter"
+
+        info: dict[str, Any] = {
+            "identifiers": {(DOMAIN, stable_id)},
+            "name": self._entry.title,
+            "manufacturer": manufacturer,
+            "model": model,
+        }
+        if sn:
+            info["serial_number"] = sn
+        return info
     @property
     def native_value(self) -> float | None:
         """Return learned timeout value in seconds.
@@ -168,11 +187,30 @@ class LearnedTimeoutSampleCountSensor(SensorEntity):
         self._attr_name = f"{device_name} {name_suffix}"
         self._attr_unique_id = f"{entry.entry_id}_timing_samples_{operation}"
 
-        # Device info for grouping
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
+        # DeviceInfo is computed dynamically (prefer ProductSNStr once available).
 
+    @property
+    def device_info(self) -> dict[str, Any]:
+        sn = None
+        if self._coordinator.data:
+            raw = self._coordinator.data.get("product_sn_str")
+            if isinstance(raw, str) and raw.strip():
+                sn = raw.strip()
+
+        stable_id = sn or self._entry.unique_id or self._entry.entry_id
+        dev = (getattr(self._coordinator, "device_config", None) or {}).get("device", {})
+        manufacturer = dev.get("manufacturer") or "SRNE"
+        model = dev.get("model") or "HF Series Inverter"
+
+        info: dict[str, Any] = {
+            "identifiers": {(DOMAIN, stable_id)},
+            "name": self._entry.title,
+            "manufacturer": manufacturer,
+            "model": model,
+        }
+        if sn:
+            info["serial_number"] = sn
+        return info
     @property
     def native_value(self) -> int | None:
         """Return number of timing samples collected."""
