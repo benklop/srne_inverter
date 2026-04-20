@@ -3897,8 +3897,8 @@ registers:
     scaling: 1
     unit: W
     description:
-      Grid active power phase A (positive=exporting to grid, negative=importing
-      from grid)
+      Grid active power phase A (positive when importing from grid, negative
+      when exporting to grid)
   grid_power_b:
     address: 571
     name: GridActivePowerB
@@ -4294,6 +4294,19 @@ sensors:
         value < 0 %}exporting{% else %}balanced{% endif %}
 
         "
+  - entity_id: energy_from_grid
+    name: Energy from grid
+    description:
+      Instantaneous active power drawn from the utility grid (watts); zero
+      while exporting to the grid
+    source_type: calculated
+    formula: "{{ [0, grid_power] | max }}"
+    depends_on:
+      - grid_power
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: W
+    icon: mdi:transmission-tower-import
   - entity_id: load_power
     name: Load Power
     description: Total power consumption by connected loads and appliances

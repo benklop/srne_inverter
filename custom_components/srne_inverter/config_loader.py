@@ -13,6 +13,42 @@ from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
+# Map YAML entity list key -> key under ``defaults:`` (see entities_pilot.yaml).
+_ENTITY_LIST_DEFAULTS_KEY: tuple[tuple[str, str], ...] = (
+    ("sensors", "sensor"),
+    ("switches", "switch"),
+    ("selects", "select"),
+    ("binary_sensors", "binary_sensor"),
+    ("numbers", "number"),
+)
+
+
+def _apply_entity_defaults(config: dict[str, Any]) -> None:
+    """Merge per-type defaults into each entity (top-level keys only).
+
+    ``defaults`` is structured as::
+
+        defaults:
+          sensor:
+            state_class: measurement
+          switch: ...
+
+    The previous implementation incorrectly assigned the whole ``sensor`` dict
+    as a nested key on every entity list entry and also applied ``switch`` /
+    ``select`` defaults to sensors, so ``state_class`` never reached sensor
+    entities that relied on defaults — breaking long-term statistics and the
+    Energy dashboard.
+    """
+    defaults = config.get("defaults", {})
+    for list_key, defaults_key in _ENTITY_LIST_DEFAULTS_KEY:
+        type_defaults = defaults.get(defaults_key)
+        if not type_defaults:
+            continue
+        for entity in config.get(list_key, []):
+            for key, value in type_defaults.items():
+                if key not in entity:
+                    entity[key] = value
+
 
 async def load_entity_config(
     hass: HomeAssistant,
@@ -67,13 +103,7 @@ async def load_entity_config(
     _validate_device_profile(config)
     _process_register_definitions(config)
 
-    # Apply defaults
-    defaults = config.get("defaults", {})
-    for entity_type in ["sensors", "switches", "selects", "binary_sensors", "numbers"]:
-        for entity in config.get(entity_type, []):
-            for key, value in defaults.items():
-                if key not in entity:
-                    entity[key] = value
+    _apply_entity_defaults(config)
 
     # Validate required fields
     _validate_configuration(config)

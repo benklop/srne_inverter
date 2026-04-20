@@ -12,6 +12,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.util.enum import try_parse_enum
 
 from .configurable_base import ConfigurableBaseEntity
 from ..coordinator import SRNEDataUpdateCoordinator
@@ -33,32 +34,28 @@ class ConfigurableSensor(ConfigurableBaseEntity, SensorEntity):
 
         # Set sensor-specific attributes from config
         if device_class := config.get("device_class"):
-            try:
-                # Try uppercase first (SensorDeviceClass enum expects uppercase)
-                self._attr_device_class = SensorDeviceClass(device_class.upper())
-            except (ValueError, AttributeError):
-                # Fallback to as-is if uppercase doesn't work
-                try:
-                    self._attr_device_class = SensorDeviceClass(device_class)
-                except ValueError:
-                    _LOGGER.debug(
-                        "Invalid device_class '%s' for sensor %s",
-                        device_class,
-                        self._attr_name,
-                    )
+            if (
+                parsed_dc := try_parse_enum(SensorDeviceClass, device_class)
+            ) is not None:
+                self._attr_device_class = parsed_dc
+            else:
+                _LOGGER.debug(
+                    "Invalid device_class '%s' for sensor %s",
+                    device_class,
+                    self._attr_name,
+                )
 
         if state_class := config.get("state_class"):
-            try:
-                self._attr_state_class = SensorStateClass(state_class.upper())
-            except (ValueError, AttributeError):
-                try:
-                    self._attr_state_class = SensorStateClass(state_class)
-                except ValueError:
-                    _LOGGER.debug(
-                        "Invalid state_class '%s' for sensor %s",
-                        state_class,
-                        self._attr_name,
-                    )
+            if (
+                parsed_sc := try_parse_enum(SensorStateClass, state_class)
+            ) is not None:
+                self._attr_state_class = parsed_sc
+            else:
+                _LOGGER.debug(
+                    "Invalid state_class '%s' for sensor %s",
+                    state_class,
+                    self._attr_name,
+                )
 
         # Support both 'unit_of_measurement' and 'unit' keys
         self._attr_native_unit_of_measurement = config.get(

@@ -684,6 +684,9 @@
       "grid_power": {
         "name": "Grid Power"
       },
+      "energy_from_grid": {
+        "name": "Energy from grid"
+      },
       "load_power": {
         "name": "Load Power"
       },

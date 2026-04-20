@@ -51,6 +51,7 @@ def full_device_config():
     import yaml
 
     from custom_components.srne_inverter.config_loader import (
+        _apply_entity_defaults,
         _process_register_definitions,
         _validate_configuration,
         _validate_device_profile,
@@ -66,6 +67,7 @@ def full_device_config():
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     _validate_device_profile(config)
     _process_register_definitions(config)
+    _apply_entity_defaults(config)
     _validate_configuration(config)
     return config
 

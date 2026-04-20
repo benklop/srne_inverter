@@ -77,3 +77,19 @@ def test_battery_power_signed_sum(mock_config_entry):
     }
     sensor = ConfigurableSensor(coordinator, mock_config_entry, cfg)
     assert sensor.native_value == 700.0
+
+
+def test_energy_from_grid_import_only(mock_config_entry):
+    """Grid import magnitude: positive grid_power counts, export yields 0."""
+    for grid_w, expected in ((1500, 1500), (-800, 0), (0, 0)):
+        coordinator = _coordinator({"grid_power": grid_w, "connected": True})
+        cfg = {
+            "entity_id": "energy_from_grid",
+            "name": "Energy from grid",
+            "source_type": "calculated",
+            "depends_on": ["grid_power"],
+            "formula": "{{ [0, grid_power] | max }}",
+            "unit_of_measurement": "W",
+        }
+        sensor = ConfigurableSensor(coordinator, mock_config_entry, cfg)
+        assert sensor.native_value == float(expected)
