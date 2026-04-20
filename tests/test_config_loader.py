@@ -35,3 +35,39 @@ def test_apply_entity_defaults_does_not_override_explicit_keys():
     }
     _apply_entity_defaults(config)
     assert config["sensors"][0]["state_class"] == "total_increasing"
+
+
+def test_apply_entity_defaults_skips_state_class_for_value_mapping():
+    config = {
+        "_register_by_name": {
+            "charge_state": {"data_type": "uint16"},
+        },
+        "defaults": {"sensor": {"state_class": "measurement"}},
+        "sensors": [
+            {
+                "entity_id": "charge_state",
+                "name": "Charge State",
+                "value_mapping": {0: "Off"},
+            }
+        ],
+    }
+    _apply_entity_defaults(config)
+    assert "state_class" not in config["sensors"][0]
+
+
+def test_apply_entity_defaults_skips_state_class_for_string_register():
+    config = {
+        "_register_by_name": {
+            "product_sn_str": {"data_type": "string_low_bytes"},
+        },
+        "defaults": {"sensor": {"state_class": "measurement"}},
+        "sensors": [
+            {
+                "entity_id": "product_serial_number",
+                "name": "SN",
+                "register": "product_sn_str",
+            }
+        ],
+    }
+    _apply_entity_defaults(config)
+    assert "state_class" not in config["sensors"][0]

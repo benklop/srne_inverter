@@ -4651,6 +4651,16 @@ sensors:
     name: Charge State
     description: Current battery charging state and algorithm mode
     source_type: register
+    device_class: enum
+    options:
+      - Charge Off
+      - Quick Charge
+      - Const Voltage
+      - Float Charge
+      - Reserved
+      - Li Battery Activate
+      - Full
+      - Unknown
     value_mapping:
       0: Charge Off
       1: Quick Charge

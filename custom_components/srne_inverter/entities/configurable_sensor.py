@@ -65,6 +65,15 @@ class ConfigurableSensor(ConfigurableBaseEntity, SensorEntity):
             "suggested_display_precision"
         )
 
+        if options := config.get("options"):
+            if isinstance(options, (list, tuple)):
+                self._attr_options = [str(o) for o in options]
+            else:
+                _LOGGER.debug(
+                    "Invalid options for sensor %s (expected list)",
+                    self._attr_name,
+                )
+
         # Store source type
         self._source_type = config.get("source_type", "register")
 

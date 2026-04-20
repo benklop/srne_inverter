@@ -22,6 +22,30 @@ _ENTITY_LIST_DEFAULTS_KEY: tuple[tuple[str, str], ...] = (
     ("numbers", "number"),
 )
 
+_NON_NUMERIC_SENSOR_REGISTER_TYPES: frozenset[str] = frozenset(
+    {"string", "string_low_bytes"}
+)
+
+
+def _sensor_skip_default_state_class(
+    entity: dict[str, Any], register_by_name: dict[str, Any]
+) -> bool:
+    """True if default measurement state_class must not apply (non-numeric state)."""
+    if entity.get("value_mapping") is not None:
+        return True
+    reg_key = entity.get("register") or entity.get("entity_id")
+    if not reg_key or not isinstance(reg_key, str):
+        return False
+    reg = register_by_name.get(reg_key)
+    if not reg:
+        return False
+    dt = reg.get("data_type")
+    if not isinstance(dt, str):
+        return False
+    if dt in _NON_NUMERIC_SENSOR_REGISTER_TYPES or dt.startswith("string"):
+        return True
+    return False
+
 
 def _apply_entity_defaults(config: dict[str, Any]) -> None:
     """Merge per-type defaults into each entity (top-level keys only).
@@ -40,6 +64,7 @@ def _apply_entity_defaults(config: dict[str, Any]) -> None:
     Energy dashboard.
     """
     defaults = config.get("defaults", {})
+    register_by_name = config.get("_register_by_name", {})
     for list_key, defaults_key in _ENTITY_LIST_DEFAULTS_KEY:
         type_defaults = defaults.get(defaults_key)
         if not type_defaults:
@@ -47,6 +72,12 @@ def _apply_entity_defaults(config: dict[str, Any]) -> None:
         for entity in config.get(list_key, []):
             for key, value in type_defaults.items():
                 if key not in entity:
+                    if (
+                        list_key == "sensors"
+                        and key == "state_class"
+                        and _sensor_skip_default_state_class(entity, register_by_name)
+                    ):
+                        continue
                     entity[key] = value
 
 
