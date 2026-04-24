@@ -53,6 +53,21 @@ class _BaseConnectionManager(IConnectionManager, ABC):
     async def ensure_connected(self, address: str, max_retries: int = 3) -> bool:
         self._address = address
 
+        # TCP/USB: peer reset or cable pull can invalidate the socket while the state
+        # machine still says CONNECTED. Without this, ensure_connected returns True,
+        # refresh aborts on transport.is_connected every cycle, and we never reconnect
+        # until a full config reload (see connection reset by peer + "Transport
+        # disconnected before batch").
+        if (
+            self._state_machine.state == ConnectionState.CONNECTED
+            and not self._transport.is_connected
+        ):
+            _LOGGER.warning(
+                "Transport is down but state was connected — recovering (%s)",
+                address,
+            )
+            await self.handle_connection_lost()
+
         if self._state_machine.is_connected:
             return True
 
@@ -123,6 +138,11 @@ class _BaseConnectionManager(IConnectionManager, ABC):
             raise
 
     async def handle_connection_lost(self) -> None:
+        # BLE may schedule this from a disconnect callback after we already reconciled
+        # in ensure_connected(); avoid double failure counts / redundant work.
+        if self._state_machine.state == ConnectionState.RECONNECTING:
+            return
+
         _LOGGER.warning("Connection lost to %s", self._address)
         self._consecutive_failures += 1
         self._backoff_time = min(self._backoff_time * 2, self.MAX_BACKOFF)

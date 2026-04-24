@@ -237,6 +237,20 @@ class TestSerialConnectionManager:
     """USB serial manager does not pass Bleak disconnect callbacks."""
 
     @pytest.mark.asyncio
+    async def test_ensure_connected_recovers_when_transport_drops_but_state_connected(
+        self, fake_transport
+    ):
+        """TCP reset clears the socket while the state machine still says connected."""
+        manager = SerialConnectionManager(fake_transport)
+        assert await manager.ensure_connected("192.168.1.50") is True
+        assert manager.connection_state == "connected"
+        # Simulate peer reset: transport invalidated without handle_connection_lost
+        fake_transport._connected = False
+        assert await manager.ensure_connected("192.168.1.50") is True
+        assert fake_transport.is_connected
+        assert manager.connection_state == "connected"
+
+    @pytest.mark.asyncio
     async def test_connect_invokes_transport_with_address_only(self):
         transport = Mock()
         transport.connect = AsyncMock(return_value=True)
